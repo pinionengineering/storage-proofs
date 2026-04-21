@@ -440,7 +440,7 @@ func TestHashToQRNInQRN(t *testing.T) {
 	for range 20 {
 		data := make([]byte, 32)
 		rand.Read(data)
-		h := hashToQRN(data, N)
+		h := mgf1SHA256HashToQRN(data, N)
 		if new(big.Int).Exp(h, phi, N).Cmp(big.NewInt(1)) != 0 {
 			t.Fatalf("h(data)^(p'q') != 1: hashToQRN output is not in QR_N")
 		}
@@ -464,7 +464,7 @@ func TestFullProtocolSmallKeys(t *testing.T) {
 	for i := range nBlocks {
 		blocks[i] = make([]byte, 64)
 		rand.Read(blocks[i])
-		tags[i], err = TagBlock(pk, sk, blocks[i], uint64(i))
+		tags[i], err = SuiteV1.TagBlock(pk, sk, blocks[i], uint64(i))
 		if err != nil {
 			t.Fatalf("TagBlock[%d]: %v", i, err)
 		}
@@ -482,18 +482,19 @@ func TestFullProtocolSmallKeys(t *testing.T) {
 	Gs := new(big.Int).Exp(pk.G, s, pk.N)
 
 	chal := &Challenge{
-		C:  4,
-		K1: k1,
-		K2: k2,
-		Gs: Gs,
+		SuiteID: SuiteV1.ID(),
+		C:       4,
+		K1:      k1,
+		K2:      k2,
+		Gs:      Gs,
 	}
 
-	proof, err := GenProof(pk, blocks, chal, tags)
+	proof, err := SuiteV1.GenProof(pk, blocks, chal, tags)
 	if err != nil {
 		t.Fatalf("GenProof: %v", err)
 	}
 
-	ok, err := CheckProof(pk, sk, s, tags, chal, proof)
+	ok, err := SuiteV1.CheckProof(pk, sk, s, tags, chal, proof)
 	if err != nil {
 		t.Fatalf("CheckProof: %v", err)
 	}
@@ -517,7 +518,7 @@ func TestTamperedBlockFails(t *testing.T) {
 	for i := range nBlocks {
 		blocks[i] = make([]byte, 64)
 		rand.Read(blocks[i])
-		tags[i], err = TagBlock(pk, sk, blocks[i], uint64(i))
+		tags[i], err = SuiteV1.TagBlock(pk, sk, blocks[i], uint64(i))
 		if err != nil {
 			t.Fatalf("TagBlock[%d]: %v", i, err)
 		}
@@ -534,7 +535,7 @@ func TestTamperedBlockFails(t *testing.T) {
 	}
 	Gs := new(big.Int).Exp(pk.G, s, pk.N)
 
-	chal := &Challenge{C: 4, K1: k1, K2: k2, Gs: Gs}
+	chal := &Challenge{SuiteID: SuiteV1.ID(), C: 4, K1: k1, K2: k2, Gs: Gs}
 
 	// Tamper every block to guarantee at least one challenged block is corrupted.
 	for i := range nBlocks {
@@ -543,12 +544,12 @@ func TestTamperedBlockFails(t *testing.T) {
 		blocks[i] = tampered
 	}
 
-	proof, err := GenProof(pk, blocks, chal, tags)
+	proof, err := SuiteV1.GenProof(pk, blocks, chal, tags)
 	if err != nil {
 		t.Fatalf("GenProof: %v", err)
 	}
 
-	ok, err := CheckProof(pk, sk, s, tags, chal, proof)
+	ok, err := SuiteV1.CheckProof(pk, sk, s, tags, chal, proof)
 	if err != nil {
 		t.Fatalf("CheckProof: %v", err)
 	}

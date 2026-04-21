@@ -18,30 +18,27 @@
 //  3. Response & Verification: S calls GenProof to produce an aggregated proof V
 //     and returns it to C. C calls CheckProof with s to verify V.
 //
-// # API
+// # Versioning
 //
-//	pk, sk := KeyGen(k)                        // client, once
-//	tag_i  := TagBlock(pk, sk, block_i, i)     // client, once per block
-//	// ... upload (pk, blocks, tags) to server, delete local copies ...
+// Every Tag embeds a Suite ID so the verifier always knows which algorithm was
+// used to create it. Call TagBlock, GenProof, and CheckProof as methods on a
+// Suite value:
 //
-//	// -- per audit round --
-//	s      := random big.Int                   // client generates per-challenge secret
-//	chal   := &Challenge{C: c, K1: k1, K2: k2, Gs: g^s}
-//	proof  := GenProof(pk, blocks, chal, tags) // server
-//	ok     := CheckProof(pk, sk, s, tags, chal, proof) // client
+//	tag, err   := pdp.SuiteV1.TagBlock(pk, sk, block, i)
+//	proof, err := pdp.SuiteV1.GenProof(pk, blocks, chal, tags)
+//	ok, err    := pdp.SuiteV1.CheckProof(pk, sk, s, tags, chal, proof)
+//
+// To introduce a new algorithm variant, define a new Suite with different
+// function implementations and a new ID — existing tags remain verifiable
+// against the suite that created them.
 //
 // # Deviations from the paper
 //
-// Block data is SHA-256 hashed before being used as a group exponent. The paper
-// treats block content as a raw integer, but in practice blocks are arbitrary-length
-// byte slices. Hashing maps each block to a fixed-size value in a collision-resistant
-// way. The hash is applied identically in TagBlock and GenProof, so the verification
-// equation still holds.
+// Block data is SHA-256 hashed before use as a group exponent (necessary for
+// arbitrary-length blocks; applied identically in TagBlock and GenProof).
 //
-// hashToQRN squares a reduced SHA-256 hash, which guarantees the output is in QR_N
-// but does not produce a uniform distribution over QR_N (the paper requires uniform).
-// This is a theoretical weakness that does not affect correctness and is unlikely to
-// be exploitable in practice.
+// SuiteV1 uses MGF1 (RFC 8017 §B.2.1) with SHA-256 for hashToQRN, producing a
+// near-uniform full-domain hash over QR_N (paper footnote 3, bias < 2^{-128}).
 package pdp
 
 import (
@@ -54,6 +51,77 @@ import (
 	"math/big"
 	"sort"
 )
+
+// Suite bundles the cryptographic primitives that govern tag creation, proof
+// generation, and verification. Its numeric ID is stored in every Tag so that
+// GenProof and CheckProof can confirm all tags share the same algorithm.
+//
+// Each field is a function so that a new suite can substitute a completely
+// different implementation without touching the protocol logic. Obtain a Suite
+// via one of the package-level variables (SuiteV1, …) rather than constructing
+// one directly.
+type Suite struct {
+	// id is the numeric version identifier stored in every Tag.
+	id uint8
+
+	// HashToQRN maps an arbitrary byte string to a near-uniform element of
+	// QR_N. Must be deterministic. Called in TagBlock (with W_i) and in
+	// CheckProof (with tag.W); never called by the server during GenProof.
+	HashToQRN func(data []byte, N *big.Int) *big.Int
+
+	// PRF is a keyed pseudorandom function that produces per-block
+	// coefficients a_j. Called with the same key and index by both GenProof
+	// and CheckProof, so both sides must agree on the implementation.
+	PRF func(key []byte, j int) *big.Int
+
+	// BuildPRP constructs a pseudorandom permutation of [0, n) from key.
+	// Called with the same key and n by both GenProof and CheckProof.
+	BuildPRP func(key []byte, n int) []int
+}
+
+// ID returns the suite's numeric version identifier, suitable for storage or
+// wire encoding alongside serialized Tags and Proofs.
+func (s *Suite) ID() uint8 { return s.id }
+
+// suiteRegistry maps suite IDs to their Suite definitions. All package-level
+// Suite variables are registered here at init time so that SuiteByID can
+// resolve them without callers needing to maintain their own switch statements.
+var suiteRegistry = map[uint8]*Suite{}
+
+// SuiteByID returns the Suite registered under id, or (nil, false) if no
+// suite with that ID is known. Servers use this to dispatch GenProof to the
+// correct algorithm based on the SuiteID embedded in incoming Tags:
+//
+//	suite, ok := pdp.SuiteByID(tags[0].SuiteID)
+//	if !ok {
+//	    return fmt.Errorf("unknown suite %d", tags[0].SuiteID)
+//	}
+//	proof, err := suite.GenProof(pk, blocks, chal, tags)
+func SuiteByID(id uint8) (*Suite, bool) {
+	s, ok := suiteRegistry[id]
+	return s, ok
+}
+
+// registerSuite adds s to the registry. Called in init() for each defined suite.
+// Panics on duplicate IDs to catch accidental collisions at startup.
+func registerSuite(s *Suite) *Suite {
+	if _, exists := suiteRegistry[s.id]; exists {
+		panic(fmt.Sprintf("pdp: duplicate suite ID %d", s.id))
+	}
+	suiteRegistry[s.id] = s
+	return s
+}
+
+// SuiteV1 is the initial algorithm suite:
+//   - HashToQRN: MGF1 (RFC 8017 §B.2.1) with SHA-256, bias < 2^{-128}
+//   - PRF:       HMAC-SHA256 truncated to 128 bits
+//   - BuildPRP:  sort-by-HMAC-SHA256
+var SuiteV1 = registerSuite(&Suite{
+	id:        1,
+	HashToQRN: mgf1SHA256HashToQRN,
+	PRF:       hmacSHA256PRF128,
+	BuildPRP:  hmacSHA256PRP,
+})
 
 // PublicKey is the client's public key, shared with the server.
 //
@@ -80,16 +148,24 @@ type SecretKey struct {
 
 // Tag is the verification metadata for a single file block, computed by TagBlock.
 //
+//   - SuiteID identifies the algorithm suite used to create the tag.
 //   - T is the tag value: T = (h(W) * g^m)^d mod N.
 //   - W is the block identifier W_i = V || i, kept alongside T so the verifier
 //     can recompute h(W_i) during CheckProof without access to V.
 type Tag struct {
-	T *big.Int
-	W []byte
+	SuiteID uint8
+	T       *big.Int
+	W       []byte
 }
 
 // Challenge is generated by the client and sent to the server to initiate an audit.
 //
+//   - SuiteID identifies which algorithm suite must be used to process this
+//     challenge. K1 and K2 are only meaningful relative to the suite's PRF and
+//     PRP implementations; a different suite would produce different block
+//     selections and coefficients from the same keys. GenProof and CheckProof
+//     both verify that the challenge's SuiteID matches the suite they are called
+//     on and the SuiteID embedded in the tags.
 //   - C is the number of blocks to challenge (must satisfy 1 <= C <= len(blocks)).
 //   - K1 is a random key for the pseudorandom permutation that selects block indices.
 //   - K2 is a random key for the pseudorandom function that assigns per-block coefficients.
@@ -97,10 +173,11 @@ type Tag struct {
 //     The server uses Gs to compute rho = H((g^s)^μ) without learning s. The client
 //     passes s (not Gs) to CheckProof to verify the response.
 type Challenge struct {
-	C  int
-	K1 []byte
-	K2 []byte
-	Gs *big.Int // g^s: public blinding factor; the client keeps s secret
+	SuiteID uint8
+	C       int
+	K1      []byte
+	K2      []byte
+	Gs      *big.Int // g^s: public blinding factor; the client keeps s secret
 }
 
 // Proof is the server's response to a Challenge, produced by GenProof.
@@ -112,84 +189,17 @@ type Proof struct {
 	Rho []byte
 }
 
-// generateSafePrime returns a safe prime p = 2*p' + 1 of the requested bit length,
-// along with the Sophie Germain prime p'. Safe primes ensure that QR_N has a known,
-// prime-order subgroup structure: |QR_N| = p'*q'.
-func generateSafePrime(bits int) (p, pPrime *big.Int, err error) {
-	one := big.NewInt(1)
+// ---------------------------------------------------------------------------
+// Suite V1 primitive implementations
+// ---------------------------------------------------------------------------
 
-	for {
-		pPrime, err = rand.Prime(rand.Reader, bits-1)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		// p = 2*pPrime + 1
-		p = new(big.Int).Lsh(pPrime, 1)
-		p.Add(p, one)
-
-		if p.ProbablyPrime(20) {
-			return p, pPrime, nil
-		}
-	}
-}
-
-// generateGQRN returns a generator g of QR_N — the cyclic subgroup of quadratic
-// residues mod N of order p'*q'.
-//
-// Per §4.3 of the paper: choose a ← Z*_N such that gcd(a±1, N) = 1, then set
-// g = a² mod N. Squaring maps a into QR_N. The gcd conditions ensure a ≢ ±1 mod p
-// and a ≢ ±1 mod q, which excludes the elements whose squares collapse to 1.
-// The probability that a random a² lands in a proper subgroup of QR_N is at most
-// (p' + q') / (p'q') ≈ 1/q' + 1/p', which is negligible for large primes.
-func generateGQRN(N *big.Int) (G *big.Int, err error) {
-	one := big.NewInt(1)
-	two := big.NewInt(2)
-	nMinus1 := new(big.Int).Sub(N, one)
-
-	for {
-		// 1. sample a ∈ [1, N-1]
-		a, err := rand.Int(rand.Reader, nMinus1)
-		if err != nil {
-			return nil, err
-		}
-		a.Add(a, one)
-
-		// 2. check gcd(a, N) = 1  (a must be a unit mod N)
-		if new(big.Int).GCD(nil, nil, a, N).Cmp(one) != 0 {
-			continue
-		}
-
-		// 3. check gcd(a - 1, N) = 1  (avoids a ≡ 1 which gives g = 1)
-		aMinus1 := new(big.Int).Sub(a, one)
-		if new(big.Int).GCD(nil, nil, aMinus1, N).Cmp(one) != 0 {
-			continue
-		}
-
-		// 4. check gcd(a + 1, N) = 1  (avoids a ≡ -1 which gives g = 1)
-		aPlus1 := new(big.Int).Add(a, one)
-		if new(big.Int).GCD(nil, nil, aPlus1, N).Cmp(one) != 0 {
-			continue
-		}
-
-		// 5. g = a² mod N
-		return new(big.Int).Exp(a, two, N), nil
-	}
-}
-
-// hashToQRN maps an arbitrary byte string deterministically and near-uniformly
-// into QR_N.
+// mgf1SHA256HashToQRN maps an arbitrary byte string deterministically and
+// near-uniformly into QR_N using MGF1 (RFC 8017 §B.2.1) with SHA-256.
 //
 // Per footnote 3 of the paper, h is constructed by squaring the output of a
-// full-domain hash (FDH) function over [0, N-1]. A direct SHA-256 output is
-// only 256 bits, far smaller than the 2k-bit modulus, so we use MGF1
-// (RFC 8017 §B.2.1) with SHA-256 to expand the input to
-// ⌈(N.BitLen() + 128) / 8⌉ bytes. Reducing that value mod N introduces
-// statistical bias of at most 2^{-128}, which is negligible. Squaring the
-// result then maps uniformly into QR_N.
-func hashToQRN(data []byte, N *big.Int) *big.Int {
-	// MGF1: concatenate SHA-256(data || counter) for counter = 0, 1, 2, …
-	// until we have enough bytes to make the mod-N reduction near-uniform.
+// full-domain hash (FDH) over [0, N-1]. Generating ⌈(N.BitLen()+128)/8⌉ bytes
+// before reducing mod N bounds the statistical bias to < 2^{-128}.
+func mgf1SHA256HashToQRN(data []byte, N *big.Int) *big.Int {
 	targetBytes := (N.BitLen() + 128 + 7) / 8
 	var buf []byte
 	for counter := uint32(0); len(buf) < targetBytes; counter++ {
@@ -210,11 +220,112 @@ func hashToQRN(data []byte, N *big.Int) *big.Int {
 	return new(big.Int).Exp(x, big.NewInt(2), N)
 }
 
+// hmacSHA256PRF128 is a 128-bit pseudorandom function based on HMAC-SHA-256.
+//
+// The paper leaves the coefficient length ℓ as a protocol parameter; 128 bits
+// is standard and bounds μ = Σ a_j·m_j to at most C×256 bits, limiting the
+// cost of the server-side exponentiation Gs^μ mod N.
+func hmacSHA256PRF128(key []byte, j int) *big.Int {
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(j))
+	mac := hmac.New(sha256.New, key)
+	mac.Write(buf)
+	return new(big.Int).SetBytes(mac.Sum(nil)[:16]) // 128 bits
+}
+
+// hmacSHA256PRP constructs a pseudorandom permutation of [0, n) keyed by key.
+// It assigns each index i an HMAC-SHA-256 score and sorts by score, producing
+// a deterministic permutation that both client and server can reconstruct
+// from the same challenge key K1 without communicating the indices directly.
+func hmacSHA256PRP(key []byte, n int) []int {
+	type entry struct {
+		index int
+		score []byte
+	}
+	entries := make([]entry, n)
+	for i := range n {
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(i))
+		mac := hmac.New(sha256.New, key)
+		mac.Write(buf)
+		entries[i] = entry{index: i, score: mac.Sum(nil)}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return bytes.Compare(entries[i].score, entries[j].score) < 0
+	})
+	perm := make([]int, n)
+	for i := range n {
+		perm[i] = entries[i].index
+	}
+	return perm
+}
+
+// ---------------------------------------------------------------------------
+// Key generation (suite-independent)
+// ---------------------------------------------------------------------------
+
+// generateSafePrime returns a safe prime p = 2*p' + 1 of the requested bit
+// length, along with the Sophie Germain prime p'. Safe primes ensure that QR_N
+// has a known, prime-order subgroup structure: |QR_N| = p'*q'.
+func generateSafePrime(bits int) (p, pPrime *big.Int, err error) {
+	one := big.NewInt(1)
+	for {
+		pPrime, err = rand.Prime(rand.Reader, bits-1)
+		if err != nil {
+			return nil, nil, err
+		}
+		// p = 2*pPrime + 1
+		p = new(big.Int).Lsh(pPrime, 1)
+		p.Add(p, one)
+		if p.ProbablyPrime(20) {
+			return p, pPrime, nil
+		}
+	}
+}
+
+// generateGQRN returns a generator g of QR_N — the cyclic subgroup of quadratic
+// residues mod N of order p'*q'.
+//
+// Per §4.3 of the paper: choose a ← Z*_N such that gcd(a±1, N) = 1, then set
+// g = a² mod N. Squaring maps a into QR_N. The gcd conditions ensure a ≢ ±1 mod p
+// and a ≢ ±1 mod q, which excludes the elements whose squares collapse to 1.
+// The probability that a random a² lands in a proper subgroup of QR_N is at most
+// (p' + q') / (p'q') ≈ 1/q' + 1/p', which is negligible for large primes.
+func generateGQRN(N *big.Int) (G *big.Int, err error) {
+	one := big.NewInt(1)
+	two := big.NewInt(2)
+	nMinus1 := new(big.Int).Sub(N, one)
+	for {
+		a, err := rand.Int(rand.Reader, nMinus1)
+		if err != nil {
+			return nil, err
+		}
+		a.Add(a, one)
+
+		if new(big.Int).GCD(nil, nil, a, N).Cmp(one) != 0 {
+			continue
+		}
+		aMinus1 := new(big.Int).Sub(a, one)
+		if new(big.Int).GCD(nil, nil, aMinus1, N).Cmp(one) != 0 {
+			continue
+		}
+		aPlus1 := new(big.Int).Add(a, one)
+		if new(big.Int).GCD(nil, nil, aPlus1, N).Cmp(one) != 0 {
+			continue
+		}
+
+		return new(big.Int).Exp(a, two, N), nil
+	}
+}
+
 // KeyGen generates a fresh key pair for the S-PDP scheme.
 //
 // k is the security parameter in bits; it controls the size of the safe primes
 // used to build the RSA modulus (N is approximately 2k bits). The paper requires
 // k ≥ 1024 for security; smaller values (e.g. k = 128) are only suitable for tests.
+//
+// Key generation is independent of the algorithm suite. The same key pair can
+// be used with any Suite.
 //
 // The algorithm (§4.2 of the paper):
 //  1. Generate safe primes p = 2p'+1 and q = 2q'+1; set N = p*q.
@@ -232,7 +343,6 @@ func KeyGen(k int) (pk *PublicKey, sk *SecretKey, err error) {
 		return nil, nil, err
 	}
 
-	// N = p*q is the RSA modulus.
 	N := new(big.Int).Mul(p, q)
 
 	// phi = p'*q' is the order of QR_N.
@@ -241,8 +351,6 @@ func KeyGen(k int) (pk *PublicKey, sk *SecretKey, err error) {
 	phi := new(big.Int).Mul(pPrime, qPrime)
 
 	// e is a 256-bit prime chosen coprime to phi.
-	// The paper requires e > λ and d > λ for some security threshold λ; 256 bits
-	// is a reasonable choice.
 	one := big.NewInt(1)
 	var e *big.Int
 	for {
@@ -261,13 +369,11 @@ func KeyGen(k int) (pk *PublicKey, sk *SecretKey, err error) {
 		return nil, nil, fmt.Errorf("mod inverse of e mod phi failed")
 	}
 
-	// g is a generator of QR_N per the paper's construction.
 	g, err := generateGQRN(N)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// v is a k-bit random secret used to bind block identifiers to this key pair.
 	v := make([]byte, k/8)
 	if _, err = rand.Read(v); err != nil {
 		return nil, nil, err
@@ -278,19 +384,23 @@ func KeyGen(k int) (pk *PublicKey, sk *SecretKey, err error) {
 	return pk, sk, nil
 }
 
+// ---------------------------------------------------------------------------
+// Protocol operations (Suite methods)
+// ---------------------------------------------------------------------------
+
 // TagBlock computes the verification tag for block m at position i.
 //
 // The algorithm (§4.2 of the paper):
 //  1. Derive the block identifier W_i = V || encode(i).
 //  2. Compute T = (h(W_i) * g^m)^d mod N.
-//  3. Return (T, W_i).
+//  3. Return (T, W_i) tagged with the suite ID.
 //
 // Deviation from the paper: m is SHA-256 hashed before being used as a group
 // exponent, mapping arbitrary-length block data to a fixed 256-bit integer.
 // GenProof applies the same hash, so the verification equation is unaffected.
 //
 // The tags (but not sk.V) are sent to the server along with the blocks.
-func TagBlock(pk *PublicKey, sk *SecretKey, m []byte, i uint64) (*Tag, error) {
+func (s *Suite) TagBlock(pk *PublicKey, sk *SecretKey, m []byte, i uint64) (*Tag, error) {
 	iBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(iBytes, i)
 
@@ -304,71 +414,32 @@ func TagBlock(pk *PublicKey, sk *SecretKey, m []byte, i uint64) (*Tag, error) {
 	hm := sha256.Sum256(m)
 	mInt := new(big.Int).SetBytes(hm[:])
 
-	h := hashToQRN(Wi, pk.N)                 // h(W_i) ∈ QR_N
-	gm := new(big.Int).Exp(pk.G, mInt, pk.N) // g^m mod N
-	T := new(big.Int).Mul(gm, h)             // h(W_i) * g^m
+	h := s.HashToQRN(Wi, pk.N)                // h(W_i) ∈ QR_N
+	gm := new(big.Int).Exp(pk.G, mInt, pk.N)  // g^m mod N
+	T := new(big.Int).Mul(gm, h)              // h(W_i) * g^m
 	T.Mod(T, pk.N)
 	T.Exp(T, sk.D, pk.N) // (h(W_i) * g^m)^d mod N
 
-	return &Tag{T: T, W: Wi}, nil
-}
-
-// PRF is a pseudorandom function keyed by key, evaluated at integer j.
-// It is used in GenProof and CheckProof to derive per-block coefficients a_j.
-//
-// The output is truncated to 128 bits (the first 16 bytes of HMAC-SHA-256).
-// The paper leaves the coefficient length ℓ as a protocol parameter; 128 bits
-// provides standard security while keeping μ = Σ a_j·m_j bounded to at most
-// C×256 bits — half the size of 256-bit coefficients — which bounds the cost
-// of the server-side exponentiation Gs^μ mod N.
-func PRF(key []byte, j int) *big.Int {
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(j))
-	mac := hmac.New(sha256.New, key)
-	mac.Write(buf)
-	return new(big.Int).SetBytes(mac.Sum(nil)[:16]) // 128 bits
-}
-
-type prpEntry struct {
-	index int
-	score []byte
-}
-
-// BuildPRP constructs a pseudorandom permutation of [0, n) keyed by key.
-// It assigns each index i an HMAC-SHA-256 score and sorts by score, producing
-// a deterministic permutation that both client and server can reconstruct
-// from the same challenge key K1 without communicating the indices directly.
-func BuildPRP(key []byte, n int) []int {
-	entries := make([]prpEntry, n)
-	for i := range n {
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, uint64(i))
-		mac := hmac.New(sha256.New, key)
-		mac.Write(buf)
-		entries[i] = prpEntry{index: i, score: mac.Sum(nil)}
-	}
-	sort.Slice(entries, func(i, j int) bool {
-		return bytes.Compare(entries[i].score, entries[j].score) < 0
-	})
-	perm := make([]int, n)
-	for i := range n {
-		perm[i] = entries[i].index
-	}
-	return perm
+	return &Tag{SuiteID: s.id, T: T, W: Wi}, nil
 }
 
 // GenProof is run by the server to produce a proof of possession for the challenged blocks.
+//
+// All tags must carry the same SuiteID as the receiver; GenProof returns an
+// error on any mismatch so the server never silently uses the wrong algorithm.
 //
 // The algorithm (§4.2 of the paper):
 //  1. Use BuildPRP(K1, n) to select C block indices i_1 … i_C.
 //  2. Use PRF(K2, j) to derive coefficient a_j for each selected block.
 //  3. Compute the aggregated tag T = ∏ tag_{i_j}^{a_j} mod N.
-//  4. Compute μ = Σ a_j * SHA-256(block_{i_j}) as an integer (no modular reduction;
-//     the verification equation holds regardless — see math_test.go for proof).
+//  4. Compute μ = Σ a_j * SHA-256(block_{i_j}) as an integer.
 //  5. Compute rho = SHA-256((g^s)^μ mod N), where g^s = chal.Gs.
 //
 // blocks and tags must be the same length and chal.C must be in [1, len(blocks)].
-func GenProof(pk *PublicKey, blocks [][]byte, chal *Challenge, tags []*Tag) (*Proof, error) {
+func (s *Suite) GenProof(pk *PublicKey, blocks [][]byte, chal *Challenge, tags []*Tag) (*Proof, error) {
+	if chal.SuiteID != s.id {
+		return nil, fmt.Errorf("challenge suite %d does not match suite %d", chal.SuiteID, s.id)
+	}
 	if len(blocks) != len(tags) {
 		return nil, fmt.Errorf("blocks and tags length mismatch: %d vs %d", len(blocks), len(tags))
 	}
@@ -376,15 +447,20 @@ func GenProof(pk *PublicKey, blocks [][]byte, chal *Challenge, tags []*Tag) (*Pr
 		return nil, fmt.Errorf("challenge C=%d out of range [1, %d]", chal.C, len(blocks))
 	}
 
-	perm := BuildPRP(chal.K1, len(blocks))
+	perm := s.BuildPRP(chal.K1, len(blocks))
 
 	T := big.NewInt(1)
 	mu := big.NewInt(0)
 
 	for j := 1; j <= chal.C; j++ {
 		ij := perm[j-1] // convert 1-based challenge index to 0-based block index
-		aj := PRF(chal.K2, j)
 		tag := tags[ij]
+
+		if tag.SuiteID != s.id {
+			return nil, fmt.Errorf("tag[%d] suite %d does not match suite %d", ij, tag.SuiteID, s.id)
+		}
+
+		aj := s.PRF(chal.K2, j)
 
 		// Accumulate tag product: T = ∏ tag_i^{a_j} mod N
 		term := new(big.Int).Exp(tag.T, aj, pk.N)
@@ -408,8 +484,11 @@ func GenProof(pk *PublicKey, blocks [][]byte, chal *Challenge, tags []*Tag) (*Pr
 
 // CheckProof is run by the client to verify a proof returned by the server.
 //
-// s is the client's per-challenge secret (not transmitted to the server).
-// chal.Gs must equal pk.G^s mod N.
+// secret is the client's per-challenge secret s (not transmitted to the server).
+// chal.Gs must equal pk.G^secret mod N.
+//
+// All tags must carry the same SuiteID as the receiver; CheckProof returns an
+// error on any mismatch.
 //
 // The verification equation (§4.2 of the paper):
 //  1. Recompute H_prod = ∏ h(W_{i_j})^{a_j} mod N from the stored tags.
@@ -417,16 +496,15 @@ func GenProof(pk *PublicKey, blocks [][]byte, chal *Challenge, tags []*Tag) (*Pr
 //     This works because T^e = ∏(h(W_i)*g^m)^{d*e*a_j} = ∏ h(W_i)^{a_j} * g^{a_j*m_j}
 //     = H_prod * g^μ, using d*e ≡ 1 mod p'q' (the order of QR_N).
 //  3. Compute g^{sμ} = (g^μ)^s mod N and compare SHA-256(g^{sμ}) to proof.Rho.
-//
-// The exponent a_j is reduced mod sk.Phi before computing H_prod. This is valid
-// by Lagrange's theorem: for any x ∈ QR_N, x^k = x^(k mod p'q'). The asymmetry
-// with GenProof (which does not reduce a_j) is harmless; see math_test.go.
-func CheckProof(pk *PublicKey, sk *SecretKey, s *big.Int, tags []*Tag, chal *Challenge, proof *Proof) (bool, error) {
+func (s *Suite) CheckProof(pk *PublicKey, sk *SecretKey, secret *big.Int, tags []*Tag, chal *Challenge, proof *Proof) (bool, error) {
+	if chal.SuiteID != s.id {
+		return false, fmt.Errorf("challenge suite %d does not match suite %d", chal.SuiteID, s.id)
+	}
 	if chal.C < 1 || chal.C > len(tags) {
 		return false, fmt.Errorf("challenge C=%d out of range [1, %d]", chal.C, len(tags))
 	}
 
-	perm := BuildPRP(chal.K1, len(tags))
+	perm := s.BuildPRP(chal.K1, len(tags))
 
 	// H_prod = ∏ h(W_{i_j})^{a_j} mod N
 	Hprod := big.NewInt(1)
@@ -434,14 +512,18 @@ func CheckProof(pk *PublicKey, sk *SecretKey, s *big.Int, tags []*Tag, chal *Cha
 		ij := perm[j-1]
 		tag := tags[ij]
 
-		aj := PRF(chal.K2, j)
+		if tag.SuiteID != s.id {
+			return false, fmt.Errorf("tag[%d] suite %d does not match suite %d", ij, tag.SuiteID, s.id)
+		}
+
+		aj := s.PRF(chal.K2, j)
 		// By Lagrange's theorem, every element of QR_N has order dividing
 		// p'q' = sk.Phi, so x^k ≡ x^(k mod p'q') (mod N) for all x ∈ QR_N.
 		// Reducing a_j mod phi shrinks the exponent without changing the group
 		// element, and does not affect the verification equation.
 		aj.Mod(aj, sk.Phi)
 
-		h := hashToQRN(tag.W, pk.N)
+		h := s.HashToQRN(tag.W, pk.N)
 		term := new(big.Int).Exp(h, aj, pk.N)
 		Hprod.Mul(Hprod, term)
 		Hprod.Mod(Hprod, pk.N)
@@ -457,7 +539,7 @@ func CheckProof(pk *PublicKey, sk *SecretKey, s *big.Int, tags []*Tag, chal *Cha
 	gmu.Mod(gmu, pk.N)
 
 	// Compute g^{sμ} = (g^μ)^s and compare to the server's rho
-	gsmu := new(big.Int).Exp(gmu, s, pk.N)
+	gsmu := new(big.Int).Exp(gmu, secret, pk.N)
 	expected := sha256.Sum256(gsmu.Bytes())
 
 	return bytes.Equal(expected[:], proof.Rho), nil

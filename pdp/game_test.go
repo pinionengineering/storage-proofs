@@ -33,7 +33,7 @@ func TestPDPChallengeGame(t *testing.T) {
 	blocks := simpleFile(t, 1000)
 	tags := make([]*Tag, len(blocks))
 	for i := range blocks {
-		tags[i], err = TagBlock(pk, sk, blocks[i], uint64(i))
+		tags[i], err = SuiteV1.TagBlock(pk, sk, blocks[i], uint64(i))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -57,20 +57,21 @@ func TestPDPChallengeGame(t *testing.T) {
 	}
 
 	chal := &Challenge{
-		C:  4,
-		K1: k1,
-		K2: k2,
-		Gs: Gs,
+		SuiteID: SuiteV1.ID(),
+		C:       4,
+		K1:      k1,
+		K2:      k2,
+		Gs:      Gs,
 	}
 
 	// 4. Server generates proof from the blocks and tags.
-	proof, err := GenProof(pk, blocks, chal, tags)
+	proof, err := SuiteV1.GenProof(pk, blocks, chal, tags)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// 5. Client verifies the proof using its private s.
-	ok, err := CheckProof(pk, sk, s, tags, chal, proof)
+	ok, err := SuiteV1.CheckProof(pk, sk, s, tags, chal, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
