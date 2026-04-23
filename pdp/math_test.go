@@ -6,6 +6,7 @@ package pdp
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"math/big"
 	"testing"
 )
@@ -464,7 +465,8 @@ func TestFullProtocolSmallKeys(t *testing.T) {
 	for i := range nBlocks {
 		blocks[i] = make([]byte, 64)
 		rand.Read(blocks[i])
-		tags[i], err = SuiteV1.TagBlock(pk, sk, blocks[i], uint64(i))
+		w := binary.BigEndian.AppendUint64(append([]byte(nil), sk.V...), uint64(i))
+		tags[i], err = SuiteV1.TagBlock(pk, sk, blocks[i], w)
 		if err != nil {
 			t.Fatalf("TagBlock[%d]: %v", i, err)
 		}
@@ -518,7 +520,8 @@ func TestTamperedBlockFails(t *testing.T) {
 	for i := range nBlocks {
 		blocks[i] = make([]byte, 64)
 		rand.Read(blocks[i])
-		tags[i], err = SuiteV1.TagBlock(pk, sk, blocks[i], uint64(i))
+		w := binary.BigEndian.AppendUint64(append([]byte(nil), sk.V...), uint64(i))
+		tags[i], err = SuiteV1.TagBlock(pk, sk, blocks[i], w)
 		if err != nil {
 			t.Fatalf("TagBlock[%d]: %v", i, err)
 		}

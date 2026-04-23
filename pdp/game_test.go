@@ -2,6 +2,7 @@ package pdp
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"math/big"
 	"testing"
 )
@@ -33,7 +34,8 @@ func TestPDPChallengeGame(t *testing.T) {
 	blocks := simpleFile(t, 1000)
 	tags := make([]*Tag, len(blocks))
 	for i := range blocks {
-		tags[i], err = SuiteV1.TagBlock(pk, sk, blocks[i], uint64(i))
+		w := binary.BigEndian.AppendUint64(append([]byte(nil), sk.V...), uint64(i))
+		tags[i], err = SuiteV1.TagBlock(pk, sk, blocks[i], w)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -24,7 +24,7 @@
 // used to create it. Call TagBlock, GenProof, and CheckProof as methods on a
 // Suite value:
 //
-//	tag, err   := pdp.SuiteV1.TagBlock(pk, sk, block, i)
+//	tag, err   := pdp.SuiteV1.TagBlock(pk, sk, block, w) // w is the block identifier
 //	proof, err := pdp.SuiteV1.GenProof(pk, blocks, chal, tags)
 //	ok, err    := pdp.SuiteV1.CheckProof(pk, sk, s, tags, chal, proof)
 //
@@ -388,39 +388,35 @@ func KeyGen(k int) (pk *PublicKey, sk *SecretKey, err error) {
 // Protocol operations (Suite methods)
 // ---------------------------------------------------------------------------
 
-// TagBlock computes the verification tag for block m at position i.
+// TagBlock computes the verification tag for block m with block identifier w.
+//
+// w is the full block identifier stored in the returned Tag.W field. The caller
+// is responsible for constructing w — a typical choice is V || encode(index),
+// which binds the tag to both the key pair (via V) and the block's position.
+// Other schemes (e.g. V || CID bytes for a content-addressed DAG) are equally
+// valid as long as w is unique within the key pair's scope.
 //
 // The algorithm (§4.2 of the paper):
-//  1. Derive the block identifier W_i = V || encode(i).
-//  2. Compute T = (h(W_i) * g^m)^d mod N.
-//  3. Return (T, W_i) tagged with the suite ID.
+//  1. Compute T = (h(w) * g^m)^d mod N.
+//  2. Return (T, w) tagged with the suite ID.
 //
 // Deviation from the paper: m is SHA-256 hashed before being used as a group
 // exponent, mapping arbitrary-length block data to a fixed 256-bit integer.
 // GenProof applies the same hash, so the verification equation is unaffected.
 //
 // The tags (but not sk.V) are sent to the server along with the blocks.
-func (s *Suite) TagBlock(pk *PublicKey, sk *SecretKey, m []byte, i uint64) (*Tag, error) {
-	iBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(iBytes, i)
-
-	// W_i = V || i binds the tag to both this key pair and this block index,
-	// preventing a server from reordering or substituting blocks.
-	Wi := make([]byte, 0, len(sk.V)+len(iBytes))
-	Wi = append(Wi, sk.V...)
-	Wi = append(Wi, iBytes...)
-
+func (s *Suite) TagBlock(pk *PublicKey, sk *SecretKey, m []byte, w []byte) (*Tag, error) {
 	// mInt = SHA-256(m) interpreted as a big.Int exponent.
 	hm := sha256.Sum256(m)
 	mInt := new(big.Int).SetBytes(hm[:])
 
-	h := s.HashToQRN(Wi, pk.N)                // h(W_i) ∈ QR_N
-	gm := new(big.Int).Exp(pk.G, mInt, pk.N)  // g^m mod N
-	T := new(big.Int).Mul(gm, h)              // h(W_i) * g^m
+	h := s.HashToQRN(w, pk.N)                // h(w) ∈ QR_N
+	gm := new(big.Int).Exp(pk.G, mInt, pk.N) // g^m mod N
+	T := new(big.Int).Mul(gm, h)             // h(w) * g^m
 	T.Mod(T, pk.N)
-	T.Exp(T, sk.D, pk.N) // (h(W_i) * g^m)^d mod N
+	T.Exp(T, sk.D, pk.N) // (h(w) * g^m)^d mod N
 
-	return &Tag{SuiteID: s.id, T: T, W: Wi}, nil
+	return &Tag{SuiteID: s.id, T: T, W: w}, nil
 }
 
 // GenProof is run by the server to produce a proof of possession for the challenged blocks.
