@@ -29,6 +29,7 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"math/big"
@@ -97,7 +98,8 @@ func setup(n int) (pk *pdp.PublicKey, sk *pdp.SecretKey, honest [][]byte, tags [
 		if _, err = rand.Read(honest[i]); err != nil {
 			return
 		}
-		tags[i], err = pdp.SuiteV1.TagBlock(pk, sk, honest[i], uint64(i))
+		w := binary.BigEndian.AppendUint64(append([]byte(nil), sk.V...), uint64(i))
+		tags[i], err = pdp.SuiteV1.TagBlock(pk, sk, honest[i], w)
 		if err != nil {
 			return
 		}
