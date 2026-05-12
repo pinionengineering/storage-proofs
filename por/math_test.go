@@ -6,7 +6,6 @@ package por
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"math/big"
 	"testing"
 
@@ -40,11 +39,11 @@ func randomBlocks(t *testing.T, n, size int) [][]byte {
 	return blocks
 }
 
-// blockFieldElem returns SHA-256(block) mod P, the Z_P element that the protocol
+// blockFieldElem returns SetBytes(block) mod P, the Z_P element that the protocol
 // uses to represent block content (matching computeInnerResponse).
+// Requires P > max(block value), i.e. P > 2^(8·len(block)).
 func blockFieldElem(block []byte, P *big.Int) *big.Int {
-	sum := sha256.Sum256(block)
-	return new(big.Int).Mod(new(big.Int).SetBytes(sum[:]), P)
+	return new(big.Int).Mod(new(big.Int).SetBytes(block), P)
 }
 
 // --- 1. GF(256) field axioms -------------------------------------------------
@@ -446,9 +445,9 @@ func TestVerificationEquation(t *testing.T) {
 // block causes the server's M_j to differ from the stored sentinel.
 //
 // An adversary that corrupts a challenged block cannot produce the correct M_j
-// without solving the PRF preimage problem (finding a block whose SHA-256 hash
-// produces the same field element). The sentinel Q_j was computed before
-// corruption, so Dec(k_j^e, Q_j) ≠ M_j after corruption.
+// without finding a block whose SetBytes value (mod P) equals the original field
+// element. The sentinel Q_j was computed before corruption, so
+// Dec(k_j^e, Q_j) ≠ M_j after corruption.
 func TestVerificationEquationTamperedBlock(t *testing.T) {
 	P := smallP
 	gseed := randomBlock(t, 32)
