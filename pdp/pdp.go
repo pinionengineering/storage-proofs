@@ -69,10 +69,14 @@ type Suite struct {
 	// CheckProof (with tag.W); never called by the server during GenProof.
 	HashToQRN func(data []byte, N *big.Int) *big.Int
 
-	// PRF is a keyed pseudorandom function that produces per-block
-	// coefficients a_j. Called with the same key and index by both GenProof
-	// and CheckProof, so both sides must agree on the implementation.
-	PRF func(key []byte, j int) *big.Int
+	// PRF is a keyed pseudorandom function. When called with a single index
+	// it produces the per-block coefficient a_j used in PDP. When called with
+	// two indices (seed, j) it folds the seed into the HMAC input, giving a
+	// domain-separated output useful for multi-dimensional PRF applications
+	// such as the POR inner-code generator matrix G[s][u] = PRF(GSeed, u, s).
+	// The single-index call is identical to the original single-argument form,
+	// so existing PDP tags and proofs are unaffected.
+	PRF func(key []byte, js ...int) *big.Int
 
 	// BuildPRP constructs a pseudorandom permutation of [0, n) from key.
 	// Called with the same key and n by both GenProof and CheckProof.
@@ -225,11 +229,18 @@ func mgf1SHA256HashToQRN(data []byte, N *big.Int) *big.Int {
 // The paper leaves the coefficient length ℓ as a protocol parameter; 128 bits
 // is standard and bounds μ = Σ a_j·m_j to at most C×256 bits, limiting the
 // cost of the server-side exponentiation Gs^μ mod N.
-func hmacSHA256PRF128(key []byte, j int) *big.Int {
+//
+// Each integer in js is written as a big-endian uint64, concatenated in order,
+// forming the HMAC input. A single argument PRF(key, j) is identical to the
+// original single-index form. Multiple arguments PRF(key, u, s) fold u into
+// the input before s, providing domain separation without a second HMAC call.
+func hmacSHA256PRF128(key []byte, js ...int) *big.Int {
 	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(j))
 	mac := hmac.New(sha256.New, key)
-	mac.Write(buf)
+	for _, j := range js {
+		binary.BigEndian.PutUint64(buf, uint64(j))
+		mac.Write(buf)
+	}
 	return new(big.Int).SetBytes(mac.Sum(nil)[:16]) // 128 bits
 }
 
