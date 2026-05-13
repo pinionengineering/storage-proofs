@@ -8,15 +8,15 @@ import (
 
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
-	"github.com/pinionengineering/storage-proofs/por"
+	"github.com/pinionengineering/storage-proofs/por/bjo"
 )
 
 // defaultParams returns POR params suitable for tests with 32-byte blocks.
 // P = 2^31-1 (Mersenne prime). Alpha = 0 skips Phase I extraction; the
 // correctness requirement P > max(block value) is not needed for basic
 // challenge/verify (only for extraction).
-func defaultParams() *por.Params {
-	return &por.Params{
+func defaultParams() *bjo.Params {
+	return &bjo.Params{
 		V:      5,
 		W:      20,
 		Q:      10,
@@ -58,7 +58,7 @@ func makeFetch(store map[cid.Cid][]byte) func(cid.Cid) ([]byte, error) {
 // TestDAGChallengeGame runs the full dagpor protocol end-to-end:
 // key generation, EncodedDAG construction, challenge, response, and verification.
 func TestDAGChallengeGame(t *testing.T) {
-	mk, err := por.KeyGen(defaultParams())
+	mk, err := bjo.KeyGen(defaultParams())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestDAGChallengeGame(t *testing.T) {
 	fetch := makeFetch(store)
 
 	for j := 1; j <= mk.Params.Q; j++ {
-		chal, err := por.MakeChallenge(mk, j)
+		chal, err := bjo.MakeChallenge(mk, j)
 		if err != nil {
 			t.Fatalf("MakeChallenge(j=%d): %v", j, err)
 		}
@@ -108,7 +108,7 @@ func TestDAGChallengeGame(t *testing.T) {
 // TestDAGTamperedBlockFails confirms that a storage node returning corrupted
 // block data produces a response that Verify rejects for at least one challenge.
 func TestDAGTamperedBlockFails(t *testing.T) {
-	mk, err := por.KeyGen(defaultParams())
+	mk, err := bjo.KeyGen(defaultParams())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestDAGTamperedBlockFails(t *testing.T) {
 
 	anyFailed := false
 	for j := 1; j <= mk.Params.Q; j++ {
-		chal, _ := por.MakeChallenge(mk, j)
+		chal, _ := bjo.MakeChallenge(mk, j)
 		resp, err := Respond(ed, chal, corruptFetch)
 		if err != nil {
 			t.Fatalf("Respond(j=%d): %v", j, err)
@@ -150,7 +150,7 @@ func TestDAGTamperedBlockFails(t *testing.T) {
 // TestDAGContentRootIsExplicit verifies that ContentRoot is set to exactly the
 // CID passed to BuildEncodedDAG, regardless of which block appears first in blks.
 func TestDAGContentRootIsExplicit(t *testing.T) {
-	mk, err := por.KeyGen(defaultParams())
+	mk, err := bjo.KeyGen(defaultParams())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestDAGContentRootIsExplicit(t *testing.T) {
 // BuildEncodedDAG have CIDs that exactly match ed.Blocks[NumMessage:].
 // This is the contract Respond relies on when fetching parity blocks.
 func TestDAGParityBlockCIDsMatch(t *testing.T) {
-	mk, err := por.KeyGen(defaultParams())
+	mk, err := bjo.KeyGen(defaultParams())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestDAGParityBlockCIDsMatch(t *testing.T) {
 // ed.Blocks[0:NumMessage] match the CIDs of the input blks slice.
 // Respond uses these CIDs to fetch original blocks; they must not be recomputed.
 func TestDAGOriginalBlockCIDsPreserved(t *testing.T) {
-	mk, err := por.KeyGen(defaultParams())
+	mk, err := bjo.KeyGen(defaultParams())
 	if err != nil {
 		t.Fatal(err)
 	}

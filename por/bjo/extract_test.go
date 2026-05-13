@@ -1,4 +1,4 @@
-package por
+package bjo
 
 // Tests for the extraction (Phase II) portion of the POR protocol.
 // §4.2.1 extract step 2: decode F from the SA-ECC encoded blocks using the

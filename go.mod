@@ -3,6 +3,7 @@ module github.com/pinionengineering/storage-proofs
 go 1.26.1
 
 require (
+	github.com/cloudflare/bn256 v0.0.0-20260424232927-c1906f7954fc // indirect
 	github.com/ipfs/boxo v0.32.0 // indirect
 	github.com/ipfs/go-block-format v0.2.2 // indirect
 	github.com/ipfs/go-cid v0.6.1 // indirect

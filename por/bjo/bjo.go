@@ -1,4 +1,4 @@
-// Package por implements the improved Juels-Kaliski Proof of Retrievability (POR)
+// Package bjo implements the improved Juels-Kaliski Proof of Retrievability (POR)
 // protocol from the paper "Proofs of Retrievability: Theory and Implementation"
 // by Bowers, Juels, and Oprea (RSA Laboratories).
 // A copy of the paper is in doc/proofs-of-retrievability.pdf.
@@ -98,7 +98,7 @@
 // full encoded representation (SA-ECC output F̃ and all sentinels), which binds
 // the parity structure and sentinels in addition to the file content. Extract
 // verifies by re-encoding the recovered file and recomputing the same MAC.
-package por
+package bjo
 
 import (
 	"bytes"

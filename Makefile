@@ -20,12 +20,13 @@ proofbench: $(shell find cmd/proofbench por pdp -name '*.go')
 storage_proof_charts.html: storagecharts
 	./storagecharts
 
-comparison.html: proofbench
+comparison.html: proofbench cmd/proofbench/comparison.html
 	./proofbench
+	cp cmd/proofbench/comparison.html comparison.html
 
 stats: storagestats
 	./storagestats
 
 clean:
 	rm -f storagecharts storagestats proofbench
-	rm -f storage_proof_charts.html comparison.html
+	rm -f storage_proof_charts.html comparison.html benchdata.json

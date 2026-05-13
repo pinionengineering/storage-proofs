@@ -1,4 +1,4 @@
-package por
+package bjo
 
 // This file verifies the mathematical invariants underpinning the POR protocol.
 // Each test documents the algebraic property it is checking and its role in
