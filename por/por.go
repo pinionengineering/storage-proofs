@@ -841,6 +841,49 @@ func MakeChallenge(mk *MasterKey, j int) (*Challenge, error) {
 	}, nil
 }
 
+// RespondFetch is the core server-side response function. It derives v block
+// indices from chal.Kjc, calls fetch(idx) for each challenged index to obtain
+// the raw block bytes, and computes the inner code linear combination:
+//
+//	M_j = Σ_{s=1}^v F̃_{i_s} · G[s][u]  mod P
+//
+// where F̃_{i_s} = SetBytes(block_{i_s}) mod P. It returns a Response
+// containing M_j (fixed-length big-endian) and the sentinel sentinels[j-1].
+//
+// totalBlocks is the total number of encoded blocks (used to size the PRP).
+// fetch is called only for the v challenged indices — not all totalBlocks.
+//
+// §4.2.1 respond: "the server derives i_1,...,i_v from k_j^c, computes M_j,
+// and returns M_j and Q_j".
+func RespondFetch(p *Params, totalBlocks int, sentinels [][]byte, chal *Challenge, fetch func(idx int) ([]byte, error)) (*Response, error) {
+	if chal.J < 1 || chal.J > p.Q {
+		return nil, fmt.Errorf("por.RespondFetch: j=%d out of range [1, %d]", chal.J, p.Q)
+	}
+	if chal.U < 1 || chal.U > p.W {
+		return nil, fmt.Errorf("por.RespondFetch: u=%d out of range [1, %d]", chal.U, p.W)
+	}
+
+	indices := blockIndices(chal.Kjc, p.V, totalBlocks)
+
+	P := p.P
+	M := big.NewInt(0)
+	for s, idx := range indices {
+		data, err := fetch(idx)
+		if err != nil {
+			return nil, fmt.Errorf("por.RespondFetch: block %d: %w", idx, err)
+		}
+		Fi := new(big.Int).Mod(new(big.Int).SetBytes(data), P)
+		Gsu := innerCodeElement(p.GSeed, s+1, chal.U, P)
+		M.Add(M, new(big.Int).Mul(Fi, Gsu))
+		M.Mod(M, P)
+	}
+
+	return &Response{
+		Mj: mToBytes(M, P),
+		Qj: sentinels[chal.J-1],
+	}, nil
+}
+
 // Respond is run by the server to answer a challenge.
 //
 // It uses chal.Kjc to derive v block indices (via pdp.SuiteV1.BuildPRP),
@@ -852,21 +895,9 @@ func MakeChallenge(mk *MasterKey, j int) (*Challenge, error) {
 // §4.2.1 respond: "the server derives i_1,...,i_v from k_j^c, computes M_j,
 // and returns M_j and Q_j".
 func Respond(ef *EncodedFile, chal *Challenge) (*Response, error) {
-	p := ef.Params
-	if chal.J < 1 || chal.J > p.Q {
-		return nil, fmt.Errorf("por.Respond: j=%d out of range [1, %d]", chal.J, p.Q)
-	}
-	if chal.U < 1 || chal.U > p.W {
-		return nil, fmt.Errorf("por.Respond: u=%d out of range [1, %d]", chal.U, p.W)
-	}
-
-	indices := blockIndices(chal.Kjc, p.V, len(ef.Blocks))
-	M := computeInnerResponse(ef.Blocks, indices, p.GSeed, chal.U, p.P)
-
-	return &Response{
-		Mj: mToBytes(M, p.P),
-		Qj: ef.Sentinels[chal.J-1],
-	}, nil
+	return RespondFetch(ef.Params, len(ef.Blocks), ef.Sentinels, chal, func(idx int) ([]byte, error) {
+		return ef.Blocks[idx], nil
+	})
 }
 
 // Verify checks whether the server's response to challenge c is correct.
