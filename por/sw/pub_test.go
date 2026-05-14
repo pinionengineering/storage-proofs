@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/cloudflare/bn256"
-	"github.com/pinionengineering/storage-proofs/pdp"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 // --- helpers -----------------------------------------------------------------
@@ -199,7 +199,7 @@ func runScheme(t *testing.T, scheme Scheme, nBlocks, blockSize, nRounds int) {
 
 // TestSchemeInterfacePriv runs the Scheme game through PrivScheme.
 func TestSchemeInterfacePriv(t *testing.T) {
-	priv, err := NewPrivScheme(pdp.SuiteV1, smallParams())
+	priv, err := NewPrivScheme(suite.SuiteV1, smallParams())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestSchemeInterfacePub(t *testing.T) {
 
 // TestSchemeKind verifies that Kind() returns the correct discriminant.
 func TestSchemeKind(t *testing.T) {
-	priv, _ := NewPrivScheme(pdp.SuiteV1, smallParams())
+	priv, _ := NewPrivScheme(suite.SuiteV1, smallParams())
 	if priv.Kind() != PrivKind {
 		t.Fatalf("PrivScheme.Kind() = %v, want PrivKind", priv.Kind())
 	}

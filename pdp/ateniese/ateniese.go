@@ -76,6 +76,7 @@ import (
 	"math/big"
 
 	"github.com/pinionengineering/storage-proofs/pdp"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 // SecretKey is the client's private key. It must never be sent to the server.
@@ -231,7 +232,7 @@ func KeyGen(k int) (pk *pdp.PublicKey, sk *SecretKey, err error) {
 // GenProof applies the same hash, so the verification equation is unaffected.
 //
 // The tags (but not sk.V) are sent to the server along with the blocks.
-func TagBlock(s *pdp.Suite, pk *pdp.PublicKey, sk *SecretKey, m []byte, w []byte) (*Tag, error) {
+func TagBlock(s *suite.Suite, pk *pdp.PublicKey, sk *SecretKey, m []byte, w []byte) (*Tag, error) {
 	mInt := s.HashBlock(m)
 
 	h := s.HashToQRN(w, pk.N)                // h(w) ∈ QR_N
@@ -258,7 +259,7 @@ func TagBlock(s *pdp.Suite, pk *pdp.PublicKey, sk *SecretKey, m []byte, w []byte
 //  4. Return V = (T, ρ). (Fig. 2, GenProof step 4)
 //
 // blocks and tags must be the same length and chal.C must be in [1, len(blocks)].
-func GenProof(s *pdp.Suite, pk *pdp.PublicKey, blocks [][]byte, chal *Challenge, tags []*Tag) (*Proof, error) {
+func GenProof(s *suite.Suite, pk *pdp.PublicKey, blocks [][]byte, chal *Challenge, tags []*Tag) (*Proof, error) {
 	if chal.SuiteID != s.ID() {
 		return nil, fmt.Errorf("challenge suite %d does not match suite %d", chal.SuiteID, s.ID())
 	}
@@ -318,7 +319,7 @@ func GenProof(s *pdp.Suite, pk *pdp.PublicKey, blocks [][]byte, chal *Challenge,
 //  3. Recover g^μ = T^e · H_prod^{-1} mod N. (Fig. 2, CheckProof step 2)
 //     T^e = ∏(h(W_i)·g^m)^{d·e·a_j} = H_prod · g^μ, since d·e ≡ 1 mod p'q'.
 //  4. Check SHA-256((g^μ)^s mod N) = ρ. (Fig. 2, CheckProof step 3)
-func CheckProof(s *pdp.Suite, pk *pdp.PublicKey, sk *SecretKey, secret *big.Int, tags []*Tag, chal *Challenge, proof *Proof) (bool, error) {
+func CheckProof(s *suite.Suite, pk *pdp.PublicKey, sk *SecretKey, secret *big.Int, tags []*Tag, chal *Challenge, proof *Proof) (bool, error) {
 	if chal.SuiteID != s.ID() {
 		return false, fmt.Errorf("challenge suite %d does not match suite %d", chal.SuiteID, s.ID())
 	}

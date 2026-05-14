@@ -4,24 +4,24 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/pinionengineering/storage-proofs/pdp"
+	suitemod "github.com/pinionengineering/storage-proofs/suite"
 )
 
 // PrivScheme wraps the §3.2 private-key scheme and implements the Scheme interface.
 // Create with NewPrivScheme; the embedded secret key is used for tagging and
 // verification.
 type PrivScheme struct {
-	suite *pdp.Suite
+	suite *suitemod.Suite
 	sk    *SecretKey
 }
 
 // NewPrivScheme runs KeyGen and returns a ready PrivScheme.
-func NewPrivScheme(suite *pdp.Suite, params *Params) (*PrivScheme, error) {
+func NewPrivScheme(s *suitemod.Suite, params *Params) (*PrivScheme, error) {
 	sk, err := KeyGen(params)
 	if err != nil {
 		return nil, fmt.Errorf("sw.NewPrivScheme: %w", err)
 	}
-	return &PrivScheme{suite: suite, sk: sk}, nil
+	return &PrivScheme{suite: s, sk: sk}, nil
 }
 
 func (ps *PrivScheme) Kind() SchemeKind { return PrivKind }

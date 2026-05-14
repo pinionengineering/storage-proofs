@@ -49,10 +49,12 @@
 //
 // # Deviations from the paper
 //
-// PRF: §3 leaves the PRF unspecified. This implementation uses HMAC-SHA-256
-// with the block index encoded as a big-endian uint64. The full 256-bit output
-// is reduced mod P; the statistical bias is at most 2^(256-P.BitLen()), which
-// is negligible for |P| ≥ 128 bits.
+// PRF: §3 leaves the PRF unspecified. This implementation delegates to a
+// pdp.Suite PRF (see package pdp). The PRF must produce at least 256-bit
+// output so that the statistical bias when reducing mod P is at most
+// P/2^256 ≤ 2^{-128} for any P ≤ 2^128. All suites in package pdp satisfy
+// this requirement. Use pdp.SuiteV1 (HMAC-SHA256) for the most conservative
+// choice; see pdp.Suite for alternatives.
 package sw
 
 import (
@@ -60,7 +62,7 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/pinionengineering/storage-proofs/pdp"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 // ---------------------------------------------------------------------------
@@ -172,7 +174,7 @@ func KeyGen(params *Params) (*SecretKey, error) {
 // retaining only sk.
 //
 // σ_i = PRF_K(i) mod P + Σ_{j=1}^S f_{i,j}·α_j  mod P
-func TagFile(s *pdp.Suite, sk *SecretKey, file [][]byte) []*Tag {
+func TagFile(s *suite.Suite, sk *SecretKey, file [][]byte) []*Tag {
 	p := sk.Params
 	tags := make([]*Tag, len(file))
 	for i, block := range file {
@@ -286,7 +288,7 @@ func Respond(params *Params, file [][]byte, tags []*Tag, chal *Challenge) (*Proo
 // secret scalars α, then compares it to proof.Sigma.
 //
 // §3: "σ == Σ_t ν_t·PRF_K(i_t) + Σ_j μ_j·α_j  mod P"
-func Verify(s *pdp.Suite, sk *SecretKey, chal *Challenge, proof *Proof) (bool, error) {
+func Verify(s *suite.Suite, sk *SecretKey, chal *Challenge, proof *Proof) (bool, error) {
 	p := sk.Params
 	P := p.P
 

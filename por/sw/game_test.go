@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/pinionengineering/storage-proofs/pdp"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 // smallParams returns SW params suitable for fast tests with 32-byte blocks.
@@ -47,7 +47,7 @@ func TestSWChallengeGame(t *testing.T) {
 	}
 
 	file := randomFile(t, 50, 32)
-	tags := TagFile(pdp.SuiteV1, sk, file)
+	tags := TagFile(suite.SuiteV1, sk, file)
 
 	if len(tags) != len(file) {
 		t.Fatalf("TagFile returned %d tags, want %d", len(tags), len(file))
@@ -64,7 +64,7 @@ func TestSWChallengeGame(t *testing.T) {
 			t.Fatalf("Respond(round=%d): %v", round, err)
 		}
 
-		ok, err := Verify(pdp.SuiteV1, sk, chal, proof)
+		ok, err := Verify(suite.SuiteV1, sk, chal, proof)
 		if err != nil {
 			t.Fatalf("Verify(round=%d): %v", round, err)
 		}
@@ -85,7 +85,7 @@ func TestSWTamperedBlockFails(t *testing.T) {
 	}
 
 	file := randomFile(t, 30, 32)
-	tags := TagFile(pdp.SuiteV1, sk, file)
+	tags := TagFile(suite.SuiteV1, sk, file)
 
 	// Corrupt fetch: always return fresh random data.
 	corruptFetch := func(_ int) ([]byte, error) {
@@ -101,7 +101,7 @@ func TestSWTamperedBlockFails(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RespondFetch: %v", err)
 		}
-		ok, err := Verify(pdp.SuiteV1, sk, chal, proof)
+		ok, err := Verify(suite.SuiteV1, sk, chal, proof)
 		if err != nil {
 			t.Fatalf("Verify: %v", err)
 		}
@@ -126,7 +126,7 @@ func TestSWUnlimitedChallenges(t *testing.T) {
 	}
 
 	file := randomFile(t, 20, 32)
-	tags := TagFile(pdp.SuiteV1, sk, file)
+	tags := TagFile(suite.SuiteV1, sk, file)
 
 	for round := range 100 {
 		chal, err := MakeChallenge(len(file), params)
@@ -137,7 +137,7 @@ func TestSWUnlimitedChallenges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Respond(round=%d): %v", round, err)
 		}
-		ok, err := Verify(pdp.SuiteV1, sk, chal, proof)
+		ok, err := Verify(suite.SuiteV1, sk, chal, proof)
 		if err != nil {
 			t.Fatalf("Verify(round=%d): %v", round, err)
 		}
@@ -158,7 +158,7 @@ func TestSWRespondFetchEquivalent(t *testing.T) {
 	}
 
 	file := randomFile(t, 15, 32)
-	tags := TagFile(pdp.SuiteV1, sk, file)
+	tags := TagFile(suite.SuiteV1, sk, file)
 
 	chal, err := MakeChallenge(len(file), params)
 	if err != nil {
@@ -202,7 +202,7 @@ func TestSWSmallFile(t *testing.T) {
 	}
 
 	file := randomFile(t, 3, 32) // only 3 blocks
-	tags := TagFile(pdp.SuiteV1, sk, file)
+	tags := TagFile(suite.SuiteV1, sk, file)
 
 	chal, err := MakeChallenge(len(file), params)
 	if err != nil {
@@ -217,7 +217,7 @@ func TestSWSmallFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err := Verify(pdp.SuiteV1, sk, chal, proof)
+	ok, err := Verify(suite.SuiteV1, sk, chal, proof)
 	if err != nil {
 		t.Fatal(err)
 	}

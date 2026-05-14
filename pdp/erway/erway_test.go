@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/pinionengineering/storage-proofs/pdp"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 func makeKey(t *testing.T) *pdp.PublicKey {
@@ -32,7 +33,7 @@ func randomBlocks(t *testing.T, n, size int) [][]byte {
 func TestBuildAndBasis(t *testing.T) {
 	pk := makeKey(t)
 	blocks := randomBlocks(t, 10, 32)
-	sl, basis, err := Build(pdp.SuiteV1, pk, blocks)
+	sl, basis, err := Build(suite.SuiteV1, pk, blocks)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestBuildAndBasis(t *testing.T) {
 func TestAtRankVerifyPath(t *testing.T) {
 	pk := makeKey(t)
 	blocks := randomBlocks(t, 15, 32)
-	sl, basis, err := Build(pdp.SuiteV1, pk, blocks)
+	sl, basis, err := Build(suite.SuiteV1, pk, blocks)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -80,7 +81,7 @@ func TestAtRankVerifyPath(t *testing.T) {
 func TestProveAndVerify(t *testing.T) {
 	pk := makeKey(t)
 	blocks := randomBlocks(t, 20, 32)
-	sl, basis, err := Build(pdp.SuiteV1, pk, blocks)
+	sl, basis, err := Build(suite.SuiteV1, pk, blocks)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -92,7 +93,7 @@ func TestProveAndVerify(t *testing.T) {
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
-		proof, err := Prove(pdp.SuiteV1, pk, sl, chal, fetch)
+		proof, err := Prove(suite.SuiteV1, pk, sl, chal, fetch)
 		if err != nil {
 			t.Fatalf("Prove(round=%d): %v", round, err)
 		}
@@ -110,7 +111,7 @@ func TestProveAndVerify(t *testing.T) {
 func TestTamperedBlockFails(t *testing.T) {
 	pk := makeKey(t)
 	blocks := randomBlocks(t, 20, 32)
-	sl, basis, err := Build(pdp.SuiteV1, pk, blocks)
+	sl, basis, err := Build(suite.SuiteV1, pk, blocks)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -125,7 +126,7 @@ func TestTamperedBlockFails(t *testing.T) {
 	anyFailed := false
 	for range 10 {
 		chal, _ := MakeChallenge(sl.n, 4)
-		proof, err := Prove(pdp.SuiteV1, pk, sl, chal, corruptFetch)
+		proof, err := Prove(suite.SuiteV1, pk, sl, chal, corruptFetch)
 		if err != nil {
 			t.Fatalf("Prove with corrupt fetch: %v", err)
 		}
@@ -146,7 +147,7 @@ func TestTamperedBlockFails(t *testing.T) {
 func TestModifyUpdate(t *testing.T) {
 	pk := makeKey(t)
 	blocks := randomBlocks(t, 10, 32)
-	sl, basis, err := Build(pdp.SuiteV1, pk, blocks)
+	sl, basis, err := Build(suite.SuiteV1, pk, blocks)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestModifyUpdate(t *testing.T) {
 	rand.Read(newData)
 
 	op := UpdateOp{Kind: Modify, Index: 5, Data: newData}
-	result, err := PerformUpdate(pdp.SuiteV1, pk, sl, op)
+	result, err := PerformUpdate(suite.SuiteV1, pk, sl, op)
 	if err != nil {
 		t.Fatalf("PerformUpdate: %v", err)
 	}
@@ -178,7 +179,7 @@ func TestModifyUpdate(t *testing.T) {
 	blocks[4] = newData
 	fetch := func(i int) ([]byte, error) { return blocks[i-1], nil }
 	chal, _ := MakeChallenge(sl.n, 4)
-	proof, err := Prove(pdp.SuiteV1, pk, sl, chal, fetch)
+	proof, err := Prove(suite.SuiteV1, pk, sl, chal, fetch)
 	if err != nil {
 		t.Fatalf("Prove after Modify: %v", err)
 	}
@@ -195,7 +196,7 @@ func TestModifyUpdate(t *testing.T) {
 func TestInsertUpdate(t *testing.T) {
 	pk := makeKey(t)
 	blocks := randomBlocks(t, 10, 32)
-	sl, basis, err := Build(pdp.SuiteV1, pk, blocks)
+	sl, basis, err := Build(suite.SuiteV1, pk, blocks)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -204,7 +205,7 @@ func TestInsertUpdate(t *testing.T) {
 	rand.Read(newData)
 
 	op := UpdateOp{Kind: Insert, Index: 5, Data: newData}
-	result, err := PerformUpdate(pdp.SuiteV1, pk, sl, op)
+	result, err := PerformUpdate(suite.SuiteV1, pk, sl, op)
 	if err != nil {
 		t.Fatalf("PerformUpdate(Insert): %v", err)
 	}
@@ -235,13 +236,13 @@ func TestDeleteUpdate(t *testing.T) {
 
 	for _, idx := range []int{1, 5, 10} {
 		blocks := randomBlocks(t, 10, 32)
-		sl, basis, err := Build(pdp.SuiteV1, pk, blocks)
+		sl, basis, err := Build(suite.SuiteV1, pk, blocks)
 		if err != nil {
 			t.Fatalf("idx=%d Build: %v", idx, err)
 		}
 
 		op := UpdateOp{Kind: Delete, Index: idx}
-		result, err := PerformUpdate(pdp.SuiteV1, pk, sl, op)
+		result, err := PerformUpdate(suite.SuiteV1, pk, sl, op)
 		if err != nil {
 			t.Fatalf("idx=%d PerformUpdate(Delete): %v", idx, err)
 		}
@@ -274,7 +275,7 @@ func TestDeleteUpdate(t *testing.T) {
 			return remaining[i-1], nil
 		}
 		chal, _ := MakeChallenge(sl.n, 3)
-		proof, err := Prove(pdp.SuiteV1, pk, sl, chal, fetch)
+		proof, err := Prove(suite.SuiteV1, pk, sl, chal, fetch)
 		if err != nil {
 			t.Fatalf("idx=%d Prove after Delete: %v", idx, err)
 		}

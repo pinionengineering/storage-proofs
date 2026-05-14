@@ -9,6 +9,8 @@ import (
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/pinionengineering/storage-proofs/pdp"
+	"github.com/pinionengineering/storage-proofs/pdp/ateniese"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 // simpleDAG creates n random 1 KB IPFS blocks and returns them together with
@@ -37,8 +39,8 @@ func simpleDAG(t *testing.T, n int) ([]blocks.Block, func(cid.Cid) ([]byte, erro
 	return blks, fetch
 }
 
-// newChallenge builds a random pdp.Challenge for the given suite and block count.
-func newChallenge(t *testing.T, pk *pdp.PublicKey, c int) (*pdp.Challenge, *big.Int) {
+// newChallenge builds a random ateniese.Challenge for the given public key and block count.
+func newChallenge(t *testing.T, pk *pdp.PublicKey, c int) (*ateniese.Challenge, *big.Int) {
 	t.Helper()
 	s, err := rand.Int(rand.Reader, pk.N)
 	if err != nil {
@@ -52,8 +54,8 @@ func newChallenge(t *testing.T, pk *pdp.PublicKey, c int) (*pdp.Challenge, *big.
 	if _, err = rand.Read(k2); err != nil {
 		t.Fatal(err)
 	}
-	chal := &pdp.Challenge{
-		SuiteID: pdp.SuiteV1.ID(),
+	chal := &ateniese.Challenge{
+		SuiteID: suite.SuiteV1.ID(),
 		C:       c,
 		K1:      k1,
 		K2:      k2,
@@ -65,7 +67,7 @@ func newChallenge(t *testing.T, pk *pdp.PublicKey, c int) (*pdp.Challenge, *big.
 // TestDAGChallengeGame runs the full dagpdp protocol end-to-end:
 // key generation, TagList construction, challenge, proof, and verification.
 func TestDAGChallengeGame(t *testing.T) {
-	pk, sk, err := pdp.KeyGen(128)
+	pk, sk, err := ateniese.KeyGen(128)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +75,7 @@ func TestDAGChallengeGame(t *testing.T) {
 	blks, fetch := simpleDAG(t, 100)
 	contentRoot := blks[0].Cid() // explicit root — not implied by position
 
-	tagList, err := BuildTagList(pdp.SuiteV1, pk, sk, contentRoot, blks)
+	tagList, err := BuildTagList(suite.SuiteV1, pk, sk, contentRoot, blks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,13 +105,13 @@ func TestDAGChallengeGame(t *testing.T) {
 // TestDAGTamperedBlockFails confirms that a storage node returning corrupted
 // block data produces a proof that CheckProof rejects.
 func TestDAGTamperedBlockFails(t *testing.T) {
-	pk, sk, err := pdp.KeyGen(128)
+	pk, sk, err := ateniese.KeyGen(128)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	blks, _ := simpleDAG(t, 100)
-	tagList, err := BuildTagList(pdp.SuiteV1, pk, sk, blks[0].Cid(), blks)
+	tagList, err := BuildTagList(suite.SuiteV1, pk, sk, blks[0].Cid(), blks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +143,7 @@ func TestDAGTamperedBlockFails(t *testing.T) {
 // TestDAGContentRootIsExplicit verifies that ContentRoot is set to exactly the
 // CID passed to BuildTagList, regardless of which block appears first in blks.
 func TestDAGContentRootIsExplicit(t *testing.T) {
-	pk, sk, err := pdp.KeyGen(128)
+	pk, sk, err := ateniese.KeyGen(128)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +152,7 @@ func TestDAGContentRootIsExplicit(t *testing.T) {
 
 	// Use a block that is not blks[0] as the declared content root.
 	contentRoot := blks[5].Cid()
-	tagList, err := BuildTagList(pdp.SuiteV1, pk, sk, contentRoot, blks)
+	tagList, err := BuildTagList(suite.SuiteV1, pk, sk, contentRoot, blks)
 	if err != nil {
 		t.Fatal(err)
 	}

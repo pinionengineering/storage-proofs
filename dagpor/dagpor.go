@@ -21,12 +21,11 @@ package dagpor
 
 import (
 	"fmt"
-	"math/big"
 
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
-	"github.com/pinionengineering/storage-proofs/pdp"
 	"github.com/pinionengineering/storage-proofs/por/bjo"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 // EncodedBlock pairs a position in the encoded file with its IPFS CID.
@@ -69,7 +68,7 @@ type EncodedDAG struct {
 // each as an IPFS block whose CID matches the corresponding entry in
 // EncodedDAG.Blocks[NumMessage:]. The caller is responsible for storing
 // these blocks in the server's block store so Respond can fetch them by CID.
-func BuildEncodedDAG(mk *bjo.MasterKey, contentRoot cid.Cid, blks []blocks.Block) (*EncodedDAG, []blocks.Block, error) {
+func BuildEncodedDAG(s *suite.Suite, mk *bjo.MasterKey, contentRoot cid.Cid, blks []blocks.Block) (*EncodedDAG, []blocks.Block, error) {
 	if len(blks) == 0 {
 		return nil, nil, fmt.Errorf("dagpor: blks must not be empty")
 	}
@@ -79,7 +78,7 @@ func BuildEncodedDAG(mk *bjo.MasterKey, contentRoot cid.Cid, blks []blocks.Block
 		fileBlocks[i] = b.RawData()
 	}
 
-	ef, err := bjo.Encode(mk, fileBlocks)
+	ef, err := bjo.Encode(s, mk, fileBlocks)
 	if err != nil {
 		return nil, nil, fmt.Errorf("dagpor: %w", err)
 	}
@@ -112,54 +111,15 @@ func BuildEncodedDAG(mk *bjo.MasterKey, contentRoot cid.Cid, blks []blocks.Block
 //
 // fetch is called once per challenged block to retrieve its raw bytes from the
 // node's block store by CID. Only the V selected blocks are fetched.
-//
-// The inner code response is computed identically to bjo.Respond:
-//
-//	M = Σ_{s=1}^v F̃_{i_s} · G[s][u]  mod P
-//
-// where F̃_{i_s} = SetBytes(block_{i_s}) mod P and G[s][u] = PRF(GSeed, u, s)
-// mod P. Block indices are derived from chal.Kjc via pdp.SuiteV1.BuildPRP,
-// matching the derivation in bjo.Respond exactly. The challenged sentinel Q_j
-// is retrieved from ed.Sentinels[chal.J-1].
-func Respond(ed *EncodedDAG, chal *bjo.Challenge, fetch func(cid.Cid) ([]byte, error)) (*bjo.Response, error) {
-	p := ed.Params
-	t := len(ed.Blocks)
-
-	if chal.J < 1 || chal.J > p.Q {
-		return nil, fmt.Errorf("dagpor: j=%d out of range [1, %d]", chal.J, p.Q)
-	}
-	if chal.U < 1 || chal.U > p.W {
-		return nil, fmt.Errorf("dagpor: u=%d out of range [1, %d]", chal.U, p.W)
-	}
-
-	// Derive v block indices using the same PRP as bjo.blockIndices.
-	indices := pdp.SuiteV1.BuildPRP(chal.Kjc, t)[:p.V]
-
-	// Compute M = Σ_{s=1}^v F̃_{i_s}·G[s][u] mod P, fetching each block by CID.
-	P := p.P
-	M := big.NewInt(0)
-	for s, idx := range indices {
+// Delegates to bjo.RespondFetch with a CID-based fetch wrapper.
+func Respond(s *suite.Suite, ed *EncodedDAG, chal *bjo.Challenge, fetch func(cid.Cid) ([]byte, error)) (*bjo.Response, error) {
+	return bjo.RespondFetch(s, ed.Params, len(ed.Blocks), ed.Sentinels, chal, func(idx int) ([]byte, error) {
 		data, err := fetch(ed.Blocks[idx].CID)
 		if err != nil {
 			return nil, fmt.Errorf("dagpor: fetch block %d (%s): %w", idx, ed.Blocks[idx].CID, err)
 		}
-		Fi := new(big.Int).Mod(new(big.Int).SetBytes(data), P)
-		// G[s+1][u] = PRF(GSeed, u, s+1) mod P; matches bjo.innerCodeElement convention.
-		Gsu := new(big.Int).Mod(pdp.SuiteV1.PRF(p.GSeed, chal.U, s+1), P)
-		M.Add(M, new(big.Int).Mul(Fi, Gsu))
-		M.Mod(M, P)
-	}
-
-	// Encode M as fixed-length big-endian bytes of length (P.BitLen()+7)/8.
-	pLen := (P.BitLen() + 7) / 8
-	mBytes := M.Bytes()
-	mFixed := make([]byte, pLen)
-	copy(mFixed[pLen-len(mBytes):], mBytes)
-
-	return &bjo.Response{
-		Mj: mFixed,
-		Qj: ed.Sentinels[chal.J-1],
-	}, nil
+		return data, nil
+	})
 }
 
 // Verify checks whether the server's response to chal is correct.

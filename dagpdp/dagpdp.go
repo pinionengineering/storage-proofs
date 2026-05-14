@@ -1,4 +1,4 @@
-// Package dagpdp adapts the S-PDP protocol from the pdp package to IPFS DAGs.
+// Package dagpdp adapts the S-PDP protocol from the pdp/ateniese package to IPFS DAGs.
 //
 // A client walks an IPFS content DAG, computes an S-PDP tag for each block,
 // and assembles the result into a TagList — an ordered set of (CID, Tag) pairs
@@ -11,9 +11,9 @@
 //
 // Challenge / proof flow:
 //
-//  1. Verifier generates a pdp.Challenge (using K1/PRP for block selection).
+//  1. Verifier generates an ateniese.Challenge (using K1/PRP for block selection).
 //  2. Storage node calls GenProof, which fetches only the challenged blocks
-//     from its pin store by CID and delegates to pdp.Suite.GenProof.
+//     from its pin store by CID and delegates to ateniese.GenProof.
 //  3. Verifier calls CheckProof.
 package dagpdp
 
@@ -24,12 +24,14 @@ import (
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/pinionengineering/storage-proofs/pdp"
+	"github.com/pinionengineering/storage-proofs/pdp/ateniese"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 // TagBlock pairs an IPFS block's content address with its S-PDP tag.
 type TagBlock struct {
 	CID cid.Cid
-	Tag *pdp.Tag
+	Tag *ateniese.Tag
 }
 
 // TagList is an ordered set of TagBlocks covering all blocks in a content DAG.
@@ -55,7 +57,7 @@ type TagList struct {
 // blks is the complete ordered list of DAG blocks to tag. The walk order is
 // caller-determined; whichever order is used must be reproduced consistently
 // by both the prover and the verifier when resolving challenge indices.
-func BuildTagList(s *pdp.Suite, pk *pdp.PublicKey, sk *pdp.SecretKey, contentRoot cid.Cid, blks []blocks.Block) (*TagList, error) {
+func BuildTagList(s *suite.Suite, pk *pdp.PublicKey, sk *ateniese.SecretKey, contentRoot cid.Cid, blks []blocks.Block) (*TagList, error) {
 	if len(blks) == 0 {
 		return nil, fmt.Errorf("dagpdp: blks must not be empty")
 	}
@@ -67,7 +69,7 @@ func BuildTagList(s *pdp.Suite, pk *pdp.PublicKey, sk *pdp.SecretKey, contentRoo
 		w = append(w, sk.V...)
 		w = append(w, cidBytes...)
 
-		tag, err := s.TagBlock(pk, sk, b.RawData(), w)
+		tag, err := ateniese.TagBlock(s, pk, sk, b.RawData(), w)
 		if err != nil {
 			return nil, fmt.Errorf("dagpdp: tag for block %d: %w", i, err)
 		}
@@ -77,10 +79,10 @@ func BuildTagList(s *pdp.Suite, pk *pdp.PublicKey, sk *pdp.SecretKey, contentRoo
 	return &TagList{ContentRoot: contentRoot, Blocks: tagBlocks}, nil
 }
 
-// Tags returns the pdp.Tag slice in Blocks order, suitable for passing
-// directly to pdp.Suite.GenProof and pdp.Suite.CheckProof.
-func (tl *TagList) Tags() []*pdp.Tag {
-	tags := make([]*pdp.Tag, len(tl.Blocks))
+// Tags returns the ateniese.Tag slice in Blocks order, suitable for passing
+// directly to ateniese.GenProof and ateniese.CheckProof.
+func (tl *TagList) Tags() []*ateniese.Tag {
+	tags := make([]*ateniese.Tag, len(tl.Blocks))
 	for i, tb := range tl.Blocks {
 		tags[i] = tb.Tag
 	}
@@ -94,8 +96,8 @@ func (tl *TagList) Tags() []*pdp.Tag {
 //
 // chal must have been constructed for this TagList (same SuiteID,
 // C ≤ len(tl.Blocks)).
-func GenProof(tl *TagList, pk *pdp.PublicKey, chal *pdp.Challenge, fetch func(cid.Cid) ([]byte, error)) (*pdp.Proof, error) {
-	s, ok := pdp.SuiteByID(chal.SuiteID)
+func GenProof(tl *TagList, pk *pdp.PublicKey, chal *ateniese.Challenge, fetch func(cid.Cid) ([]byte, error)) (*ateniese.Proof, error) {
+	s, ok := suite.SuiteByID(chal.SuiteID)
 	if !ok {
 		return nil, fmt.Errorf("dagpdp: unknown suite ID %d", chal.SuiteID)
 	}
@@ -103,10 +105,10 @@ func GenProof(tl *TagList, pk *pdp.PublicKey, chal *pdp.Challenge, fetch func(ci
 	n := len(tl.Blocks)
 	perm := s.BuildPRP(chal.K1, n)
 
-	// Build parallel slices for pdp.GenProof, fetching data only for the C
+	// Build parallel slices for ateniese.GenProof, fetching data only for the C
 	// challenged positions. Non-challenged positions are nil and never accessed.
 	blockData := make([][]byte, n)
-	tags := make([]*pdp.Tag, n)
+	tags := make([]*ateniese.Tag, n)
 	for j := 1; j <= chal.C; j++ {
 		ij := perm[j-1]
 		tags[ij] = tl.Blocks[ij].Tag
@@ -118,14 +120,14 @@ func GenProof(tl *TagList, pk *pdp.PublicKey, chal *pdp.Challenge, fetch func(ci
 		blockData[ij] = data
 	}
 
-	return s.GenProof(pk, blockData, chal, tags)
+	return ateniese.GenProof(s, pk, blockData, chal, tags)
 }
 
 // CheckProof verifies a proof returned by GenProof.
-func CheckProof(tl *TagList, pk *pdp.PublicKey, sk *pdp.SecretKey, secret *big.Int, chal *pdp.Challenge, proof *pdp.Proof) (bool, error) {
-	s, ok := pdp.SuiteByID(chal.SuiteID)
+func CheckProof(tl *TagList, pk *pdp.PublicKey, sk *ateniese.SecretKey, secret *big.Int, chal *ateniese.Challenge, proof *ateniese.Proof) (bool, error) {
+	s, ok := suite.SuiteByID(chal.SuiteID)
 	if !ok {
 		return false, fmt.Errorf("dagpdp: unknown suite ID %d", chal.SuiteID)
 	}
-	return s.CheckProof(pk, sk, secret, tl.Tags(), chal, proof)
+	return ateniese.CheckProof(s, pk, sk, secret, tl.Tags(), chal, proof)
 }

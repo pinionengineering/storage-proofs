@@ -13,7 +13,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/pinionengineering/storage-proofs/pdp"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 // defaultParams returns a small but complete parameter set for extraction tests.
@@ -37,7 +37,7 @@ func encodeFile(t *testing.T, params *Params, numBlocks int) (*MasterKey, *Encod
 		t.Fatalf("KeyGen: %v", err)
 	}
 	blocks := randomBlocks(t, numBlocks, 32)
-	ef, err := Encode(pdp.SuiteV1, mk, blocks)
+	ef, err := Encode(suite.SuiteV1, mk, blocks)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
@@ -161,11 +161,11 @@ func TestSAECCRoundTrip(t *testing.T) {
 
 	for _, m := range []int{4, 8, 9, 12, 20} {
 		blocks := randomBlocks(t, m, 32)
-		encoded, err := saeccEncode(pdp.SuiteV1, blocks, outerN, outerK, kPerm, kECCPerm, kECCEnc)
+		encoded, err := saeccEncode(suite.SuiteV1, blocks, outerN, outerK, kPerm, kECCPerm, kECCEnc)
 		if err != nil {
 			t.Fatalf("m=%d saeccEncode: %v", m, err)
 		}
-		decoded, err := saeccDecode(pdp.SuiteV1, encoded, m, outerN, outerK, kPerm, kECCPerm, kECCEnc)
+		decoded, err := saeccDecode(suite.SuiteV1, encoded, m, outerN, outerK, kPerm, kECCPerm, kECCEnc)
 		if err != nil {
 			t.Fatalf("m=%d saeccDecode: %v", m, err)
 		}
@@ -186,7 +186,7 @@ func TestSAECCDecodeWithParityErasures(t *testing.T) {
 	m := 8 // 2 stripes
 
 	blocks := randomBlocks(t, m, 32)
-	encoded, err := saeccEncode(pdp.SuiteV1, blocks, outerN, outerK, kPerm, kECCPerm, kECCEnc)
+	encoded, err := saeccEncode(suite.SuiteV1, blocks, outerN, outerK, kPerm, kECCPerm, kECCEnc)
 	if err != nil {
 		t.Fatalf("saeccEncode: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestSAECCDecodeWithParityErasures(t *testing.T) {
 	// Erase the first parity block (position m).
 	encoded[m] = nil
 
-	decoded, err := saeccDecode(pdp.SuiteV1, encoded, m, outerN, outerK, kPerm, kECCPerm, kECCEnc)
+	decoded, err := saeccDecode(suite.SuiteV1, encoded, m, outerN, outerK, kPerm, kECCPerm, kECCEnc)
 	if err != nil {
 		t.Fatalf("saeccDecode with parity erasure: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestSAECCDecodeWithMessageErasure(t *testing.T) {
 	m := 8 // 2 stripes of 4
 
 	blocks := randomBlocks(t, m, 32)
-	encoded, err := saeccEncode(pdp.SuiteV1, blocks, outerN, outerK, kPerm, kECCPerm, kECCEnc)
+	encoded, err := saeccEncode(suite.SuiteV1, blocks, outerN, outerK, kPerm, kECCPerm, kECCEnc)
 	if err != nil {
 		t.Fatalf("saeccEncode: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestSAECCDecodeWithMessageErasure(t *testing.T) {
 	// stripe; we erase block 0 which always exists.
 	encoded[0] = nil
 
-	decoded, err := saeccDecode(pdp.SuiteV1, encoded, m, outerN, outerK, kPerm, kECCPerm, kECCEnc)
+	decoded, err := saeccDecode(suite.SuiteV1, encoded, m, outerN, outerK, kPerm, kECCPerm, kECCEnc)
 	if err != nil {
 		t.Fatalf("saeccDecode with message erasure: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestSAECCDecodeWithMessageErasure(t *testing.T) {
 func TestExtractHonestServer(t *testing.T) {
 	mk, ef, original := encodeFile(t, defaultParams(), 12)
 
-	recovered, err := Extract(pdp.SuiteV1, mk, ef)
+	recovered, err := Extract(suite.SuiteV1, mk, ef)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestExtractHonestServer(t *testing.T) {
 func TestExtractShortFile(t *testing.T) {
 	mk, ef, original := encodeFile(t, defaultParams(), 9) // 9 blocks, OuterK=4 → short last stripe
 
-	recovered, err := Extract(pdp.SuiteV1, mk, ef)
+	recovered, err := Extract(suite.SuiteV1, mk, ef)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestExtractWithParityErasures(t *testing.T) {
 	ef.Blocks[ef.NumMessage+0] = nil
 	ef.Blocks[ef.NumMessage+2] = nil
 
-	recovered, err := Extract(pdp.SuiteV1, mk, ef)
+	recovered, err := Extract(suite.SuiteV1, mk, ef)
 	if err != nil {
 		t.Fatalf("Extract with parity erasures: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestExtractWithMessageErasure(t *testing.T) {
 	// Erase one message block.
 	ef.Blocks[0] = nil
 
-	recovered, err := Extract(pdp.SuiteV1, mk, ef)
+	recovered, err := Extract(suite.SuiteV1, mk, ef)
 	if err != nil {
 		t.Fatalf("Extract with message erasure: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestExtractMACVerification(t *testing.T) {
 		ef.Blocks[i] = randomBlock(t, 32)
 	}
 
-	_, err := Extract(pdp.SuiteV1, mk, ef)
+	_, err := Extract(suite.SuiteV1, mk, ef)
 	if err == nil {
 		t.Fatal("Extract: expected MAC verification error for corrupted file, got nil")
 	}
@@ -331,7 +331,7 @@ func TestExtractAfterFullChallengeGame(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := randomBlocks(t, 12, 32)
-	ef, err := Encode(pdp.SuiteV1, mk, original)
+	ef, err := Encode(suite.SuiteV1, mk, original)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,7 @@ func TestExtractAfterFullChallengeGame(t *testing.T) {
 	// Phase I: verify all Q sentinels.
 	for j := 1; j <= params.Q; j++ {
 		chal, _ := MakeChallenge(mk, j)
-		resp, _ := Respond(pdp.SuiteV1, ef, chal)
+		resp, _ := Respond(suite.SuiteV1, ef, chal)
 		ok, err := Verify(mk, chal, resp)
 		if err != nil || !ok {
 			t.Fatalf("Phase I challenge j=%d failed: ok=%v err=%v", j, ok, err)
@@ -347,7 +347,7 @@ func TestExtractAfterFullChallengeGame(t *testing.T) {
 	}
 
 	// Phase II: extract the file.
-	recovered, err := Extract(pdp.SuiteV1, mk, ef)
+	recovered, err := Extract(suite.SuiteV1, mk, ef)
 	if err != nil {
 		t.Fatalf("Phase II Extract: %v", err)
 	}
@@ -384,17 +384,17 @@ func TestRespondExtractDeterministic(t *testing.T) {
 		t.Fatalf("KeyGen: %v", err)
 	}
 	blocks := randomBlocks(t, 12, 3) // 3-byte blocks fit in Z_P = 2^31-1
-	ef, err := Encode(pdp.SuiteV1, mk, blocks)
+	ef, err := Encode(suite.SuiteV1, mk, blocks)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
 
 	seed := randomBlock(t, 32)
-	r1, err := RespondExtract(pdp.SuiteV1, ef, seed, 1)
+	r1, err := RespondExtract(suite.SuiteV1, ef, seed, 1)
 	if err != nil {
 		t.Fatalf("RespondExtract: %v", err)
 	}
-	r2, err := RespondExtract(pdp.SuiteV1, ef, seed, 1)
+	r2, err := RespondExtract(suite.SuiteV1, ef, seed, 1)
 	if err != nil {
 		t.Fatalf("RespondExtract: %v", err)
 	}
@@ -413,14 +413,14 @@ func TestRespondExtractDifferentColumns(t *testing.T) {
 		t.Fatalf("KeyGen: %v", err)
 	}
 	blocks := randomBlocks(t, 12, 3)
-	ef, err := Encode(pdp.SuiteV1, mk, blocks)
+	ef, err := Encode(suite.SuiteV1, mk, blocks)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
 	seed := randomBlock(t, 32)
 
-	r1, _ := RespondExtract(pdp.SuiteV1, ef, seed, 1)
-	r2, _ := RespondExtract(pdp.SuiteV1, ef, seed, 2)
+	r1, _ := RespondExtract(suite.SuiteV1, ef, seed, 1)
+	r2, _ := RespondExtract(suite.SuiteV1, ef, seed, 2)
 	if bytes.Equal(r1, r2) {
 		t.Fatal("RespondExtract: u=1 and u=2 produced the same response (negligible probability)")
 	}
@@ -435,19 +435,19 @@ func TestRespondExtractRangeCheck(t *testing.T) {
 		t.Fatalf("KeyGen: %v", err)
 	}
 	blocks := randomBlocks(t, 8, 3)
-	ef, err := Encode(pdp.SuiteV1, mk, blocks)
+	ef, err := Encode(suite.SuiteV1, mk, blocks)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
 	seed := randomBlock(t, 32)
 
-	if _, err := RespondExtract(pdp.SuiteV1, ef, seed, 0); err == nil {
+	if _, err := RespondExtract(suite.SuiteV1, ef, seed, 0); err == nil {
 		t.Fatal("expected error for u=0, got nil")
 	}
-	if _, err := RespondExtract(pdp.SuiteV1, ef, seed, params.W+1); err == nil {
+	if _, err := RespondExtract(suite.SuiteV1, ef, seed, params.W+1); err == nil {
 		t.Fatalf("expected error for u=%d (W+1), got nil", params.W+1)
 	}
-	if _, err := RespondExtract(pdp.SuiteV1, ef, seed, params.W); err != nil {
+	if _, err := RespondExtract(suite.SuiteV1, ef, seed, params.W); err != nil {
 		t.Fatalf("u=W should be valid, got error: %v", err)
 	}
 }
@@ -484,10 +484,10 @@ func TestSolveInnerCodeRoundTrip(t *testing.T) {
 
 	responses := make([]*big.Int, w)
 	for u := 1; u <= w; u++ {
-		responses[u-1] = computeInnerResponse(pdp.SuiteV1, blocks, indices, gseed, u, P)
+		responses[u-1] = computeInnerResponse(suite.SuiteV1, blocks, indices, gseed, u, P)
 	}
 
-	recovered, err := solveInnerCode(pdp.SuiteV1, gseed, responses, v, P)
+	recovered, err := solveInnerCode(suite.SuiteV1, gseed, responses, v, P)
 	if err != nil {
 		t.Fatalf("solveInnerCode: %v", err)
 	}
@@ -509,7 +509,7 @@ func TestSolveInnerCodeTooFewResponses(t *testing.T) {
 	for i := range v - 1 {
 		responses[i] = big.NewInt(0)
 	}
-	_, err := solveInnerCode(pdp.SuiteV1, gseed, responses, v, P)
+	_, err := solveInnerCode(suite.SuiteV1, gseed, responses, v, P)
 	if err == nil {
 		t.Fatal("expected error for too few responses, got nil")
 	}
@@ -526,12 +526,12 @@ func TestExtractPhaseIHonest(t *testing.T) {
 		t.Fatalf("KeyGen: %v", err)
 	}
 	original := randomBlocks(t, 12, 3)
-	ef, err := Encode(pdp.SuiteV1, mk, original)
+	ef, err := Encode(suite.SuiteV1, mk, original)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
 
-	recovered, err := Extract(pdp.SuiteV1, mk, ef)
+	recovered, err := Extract(suite.SuiteV1, mk, ef)
 	if err != nil {
 		t.Fatalf("Extract (Phase I+II): %v", err)
 	}
@@ -549,12 +549,12 @@ func TestExtractPhaseIShortFile(t *testing.T) {
 		t.Fatalf("KeyGen: %v", err)
 	}
 	original := randomBlocks(t, 9, 3) // OuterK=4 → last stripe has 1 block
-	ef, err := Encode(pdp.SuiteV1, mk, original)
+	ef, err := Encode(suite.SuiteV1, mk, original)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
 
-	recovered, err := Extract(pdp.SuiteV1, mk, ef)
+	recovered, err := Extract(suite.SuiteV1, mk, ef)
 	if err != nil {
 		t.Fatalf("Extract (Phase I+II, short file): %v", err)
 	}

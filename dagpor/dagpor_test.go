@@ -9,6 +9,7 @@ import (
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/pinionengineering/storage-proofs/por/bjo"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 // defaultParams returns POR params suitable for tests with 32-byte blocks.
@@ -66,7 +67,7 @@ func TestDAGChallengeGame(t *testing.T) {
 	blks, store := simpleDAG(t, 20, 32)
 	contentRoot := blks[0].Cid()
 
-	ed, parityBlks, err := BuildEncodedDAG(mk, contentRoot, blks)
+	ed, parityBlks, err := BuildEncodedDAG(suite.SuiteV1, mk, contentRoot, blks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func TestDAGChallengeGame(t *testing.T) {
 			t.Fatalf("MakeChallenge(j=%d): %v", j, err)
 		}
 
-		resp, err := Respond(ed, chal, fetch)
+		resp, err := Respond(suite.SuiteV1, ed, chal, fetch)
 		if err != nil {
 			t.Fatalf("Respond(j=%d): %v", j, err)
 		}
@@ -114,7 +115,7 @@ func TestDAGTamperedBlockFails(t *testing.T) {
 	}
 
 	blks, _ := simpleDAG(t, 20, 32)
-	ed, _, err := BuildEncodedDAG(mk, blks[0].Cid(), blks)
+	ed, _, err := BuildEncodedDAG(suite.SuiteV1, mk, blks[0].Cid(), blks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestDAGTamperedBlockFails(t *testing.T) {
 	anyFailed := false
 	for j := 1; j <= mk.Params.Q; j++ {
 		chal, _ := bjo.MakeChallenge(mk, j)
-		resp, err := Respond(ed, chal, corruptFetch)
+		resp, err := Respond(suite.SuiteV1, ed, chal, corruptFetch)
 		if err != nil {
 			t.Fatalf("Respond(j=%d): %v", j, err)
 		}
@@ -159,7 +160,7 @@ func TestDAGContentRootIsExplicit(t *testing.T) {
 
 	// Use a block that is not blks[0] as the declared content root.
 	contentRoot := blks[5].Cid()
-	ed, _, err := BuildEncodedDAG(mk, contentRoot, blks)
+	ed, _, err := BuildEncodedDAG(suite.SuiteV1, mk, contentRoot, blks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +179,7 @@ func TestDAGParityBlockCIDsMatch(t *testing.T) {
 	}
 
 	blks, _ := simpleDAG(t, 12, 32)
-	ed, parityBlks, err := BuildEncodedDAG(mk, blks[0].Cid(), blks)
+	ed, parityBlks, err := BuildEncodedDAG(suite.SuiteV1, mk, blks[0].Cid(), blks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +207,7 @@ func TestDAGOriginalBlockCIDsPreserved(t *testing.T) {
 	}
 
 	blks, _ := simpleDAG(t, 8, 32)
-	ed, _, err := BuildEncodedDAG(mk, blks[0].Cid(), blks)
+	ed, _, err := BuildEncodedDAG(suite.SuiteV1, mk, blks[0].Cid(), blks)
 	if err != nil {
 		t.Fatal(err)
 	}

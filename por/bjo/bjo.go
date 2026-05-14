@@ -110,7 +110,7 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/pinionengineering/storage-proofs/pdp"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 // ---------------------------------------------------------------------------
@@ -365,7 +365,7 @@ func deriveU(kind []byte, j, w int) int {
 // blockIndices derives v distinct block indices from [0, t) using challenge key
 // kjc. Delegates to s.BuildPRP and returns the first v elements of the
 // resulting permutation.
-func blockIndices(s *pdp.Suite, kjc []byte, v, t int) []int {
+func blockIndices(s *suite.Suite, kjc []byte, v, t int) []int {
 	return s.BuildPRP(kjc, t)[:v]
 }
 
@@ -381,7 +381,7 @@ func blockIndices(s *pdp.Suite, kjc []byte, v, t int) []int {
 // the previous two-step derivation (PRF(PRF(gseed, u), row)).
 //
 // gseed is a public parameter; row and u are 1-indexed as in §4.2.1.
-func innerCodeElement(s *pdp.Suite, gseed []byte, row, u int, P *big.Int) *big.Int {
+func innerCodeElement(s *suite.Suite, gseed []byte, row, u int, P *big.Int) *big.Int {
 	return new(big.Int).Mod(s.PRF(gseed, u, row), P)
 }
 
@@ -389,7 +389,7 @@ func innerCodeElement(s *pdp.Suite, gseed []byte, row, u int, P *big.Int) *big.I
 // F_{i_s} = SetBytes(blocks[indices[s-1]]) mod P treats each block as a
 // big-endian integer in Z_P, matching the paper's §4.2.1 formula directly.
 // Correctness of extraction requires P > max(block value).
-func computeInnerResponse(s *pdp.Suite, blocks [][]byte, indices []int, gseed []byte, u int, P *big.Int) *big.Int {
+func computeInnerResponse(s *suite.Suite, blocks [][]byte, indices []int, gseed []byte, u int, P *big.Int) *big.Int {
 	M := big.NewInt(0)
 	for pos, idx := range indices {
 		Fi := new(big.Int).Mod(new(big.Int).SetBytes(blocks[idx]), P)
@@ -490,7 +490,7 @@ func parityEncrypt(keccenc []byte, blockIdx int, plaintext []byte) ([]byte, erro
 //   - kPerm: hides which original blocks belong to which stripe (PRP via pdp)
 //   - kECCPerm: hides which permuted-parity position each parity block occupies (PRP via pdp)
 //   - kECCEnc: encrypts each parity block (AES-256-CTR)
-func saeccEncode(s *pdp.Suite, blocks [][]byte, outerN, outerK int, kPerm, kECCPerm, kECCEnc []byte) ([][]byte, error) {
+func saeccEncode(s *suite.Suite, blocks [][]byte, outerN, outerK int, kPerm, kECCPerm, kECCEnc []byte) ([][]byte, error) {
 	m := len(blocks)
 	if m == 0 {
 		return nil, fmt.Errorf("por: cannot encode empty file")
@@ -557,7 +557,7 @@ func saeccEncode(s *pdp.Suite, blocks [][]byte, outerN, outerK int, kPerm, kECCP
 // Entries in encodedBlocks that are nil are treated as erasures. Recovery
 // succeeds when no stripe has more than OuterN-OuterK erased blocks among
 // its outerK message positions and numParityPerStripe parity positions.
-func saeccDecode(s *pdp.Suite, encodedBlocks [][]byte, m, outerN, outerK int, kPerm, kECCPerm, kECCEnc []byte) ([][]byte, error) {
+func saeccDecode(s *suite.Suite, encodedBlocks [][]byte, m, outerN, outerK int, kPerm, kECCPerm, kECCEnc []byte) ([][]byte, error) {
 	numStripes := (m + outerK - 1) / outerK
 	numParityPerStripe := outerN - outerK
 	totalParity := numStripes * numParityPerStripe
@@ -785,7 +785,7 @@ func KeyGen(params *Params) (*MasterKey, error) {
 //
 // §4.2.1 encode: applies SA-ECC, precomputes Q_j = Enc(k_j^e, M_j) for each
 // j ∈ [1,Q], and appends MAC_KMACFile(F̃).
-func Encode(s *pdp.Suite, mk *MasterKey, file [][]byte) (*EncodedFile, error) {
+func Encode(s *suite.Suite, mk *MasterKey, file [][]byte) (*EncodedFile, error) {
 	p := mk.Params
 
 	encoded, err := saeccEncode(s, file, p.OuterN, p.OuterK, mk.KPerm, mk.KECCPerm, mk.KECCEnc)
@@ -854,7 +854,7 @@ func MakeChallenge(mk *MasterKey, j int) (*Challenge, error) {
 //
 // §4.2.1 respond: "the server derives i_1,...,i_v from k_j^c, computes M_j,
 // and returns M_j and Q_j".
-func RespondFetch(s *pdp.Suite, p *Params, totalBlocks int, sentinels [][]byte, chal *Challenge, fetch func(idx int) ([]byte, error)) (*Response, error) {
+func RespondFetch(s *suite.Suite, p *Params, totalBlocks int, sentinels [][]byte, chal *Challenge, fetch func(idx int) ([]byte, error)) (*Response, error) {
 	if chal.J < 1 || chal.J > p.Q {
 		return nil, fmt.Errorf("por.RespondFetch: j=%d out of range [1, %d]", chal.J, p.Q)
 	}
@@ -893,7 +893,7 @@ func RespondFetch(s *pdp.Suite, p *Params, totalBlocks int, sentinels [][]byte, 
 //
 // §4.2.1 respond: "the server derives i_1,...,i_v from k_j^c, computes M_j,
 // and returns M_j and Q_j".
-func Respond(s *pdp.Suite, ef *EncodedFile, chal *Challenge) (*Response, error) {
+func Respond(s *suite.Suite, ef *EncodedFile, chal *Challenge) (*Response, error) {
 	return RespondFetch(s, ef.Params, len(ef.Blocks), ef.Sentinels, chal, func(idx int) ([]byte, error) {
 		return ef.Blocks[idx], nil
 	})
@@ -927,7 +927,7 @@ func Verify(mk *MasterKey, chal *Challenge, resp *Response) (bool, error) {
 // The client generates fresh random seeds during Phase I extraction (§4.2.1
 // step b1) and submits each seed with u = 1, 2, …, W to collect the w
 // responses needed to solve the inner code linear system.
-func RespondExtract(s *pdp.Suite, ef *EncodedFile, seed []byte, u int) ([]byte, error) {
+func RespondExtract(s *suite.Suite, ef *EncodedFile, seed []byte, u int) ([]byte, error) {
 	p := ef.Params
 	if u < 1 || u > p.W {
 		return nil, fmt.Errorf("por.RespondExtract: u=%d out of range [1, %d]", u, p.W)
@@ -944,7 +944,7 @@ func RespondExtract(s *pdp.Suite, ef *EncodedFile, seed []byte, u int) ([]byte, 
 // Uses the first v equations; for an honest server any v equations suffice.
 // Returns an error if the v×v sub-system is singular (negligible probability
 // for a random generator matrix G).
-func solveInnerCode(s *pdp.Suite, gseed []byte, responses []*big.Int, v int, P *big.Int) ([]*big.Int, error) {
+func solveInnerCode(s *suite.Suite, gseed []byte, responses []*big.Int, v int, P *big.Int) ([]*big.Int, error) {
 	if len(responses) < v {
 		return nil, fmt.Errorf("por: solveInnerCode: need at least v=%d responses, got %d", v, len(responses))
 	}
@@ -1012,7 +1012,7 @@ func solveInnerCode(s *pdp.Suite, gseed []byte, responses []*big.Int, v int, P *
 // A block is accepted when its plurality candidate appears in at least
 // 1/2 + Delta of its Di entries (§4.2.1 step d1); otherwise it is returned as
 // nil (erasure) for Phase II to correct via the outer RS code.
-func extractPhaseI(s *pdp.Suite, mk *MasterKey, ef *EncodedFile) [][]byte {
+func extractPhaseI(s *suite.Suite, mk *MasterKey, ef *EncodedFile) [][]byte {
 	p := mk.Params
 	t := len(ef.Blocks)
 
@@ -1119,7 +1119,7 @@ func extractPhaseI(s *pdp.Suite, mk *MasterKey, ef *EncodedFile) [][]byte {
 // §4.2.1 step 3: the recovered file is re-encoded and its MAC is verified
 // against ef.FileMAC. On mismatch the recovered blocks are returned alongside
 // a non-nil error so the caller can decide whether to use them.
-func Extract(s *pdp.Suite, mk *MasterKey, ef *EncodedFile) ([][]byte, error) {
+func Extract(s *suite.Suite, mk *MasterKey, ef *EncodedFile) ([][]byte, error) {
 	p := mk.Params
 
 	// §4.2.1 step 1: Phase I — inner code extraction.

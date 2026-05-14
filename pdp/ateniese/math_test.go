@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/pinionengineering/storage-proofs/pdp"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 // --- helpers -----------------------------------------------------------------
@@ -434,7 +435,7 @@ func TestGenerateGQRNInQRN(t *testing.T) {
 
 // --- 6. hashToQRN output is in QR_N -----------------------------------------
 
-// TestHashToQRNInQRN verifies that pdp.SuiteV1.HashToQRN always produces a value in QR_N
+// TestHashToQRNInQRN verifies that suite.SuiteV1.HashToQRN always produces a value in QR_N
 // (i.e. h^(p'q') ≡ 1 mod N).
 func TestHashToQRNInQRN(t *testing.T) {
 	_, pp, _, qp, N, _ := newRSAModulus(t)
@@ -443,7 +444,7 @@ func TestHashToQRNInQRN(t *testing.T) {
 	for range 20 {
 		data := make([]byte, 32)
 		rand.Read(data)
-		h := pdp.SuiteV1.HashToQRN(data, N)
+		h := suite.SuiteV1.HashToQRN(data, N)
 		if new(big.Int).Exp(h, phi, N).Cmp(big.NewInt(1)) != 0 {
 			t.Fatalf("h(data)^(p'q') != 1: hashToQRN output is not in QR_N")
 		}
@@ -468,7 +469,7 @@ func TestFullProtocolSmallKeys(t *testing.T) {
 		blocks[i] = make([]byte, 64)
 		rand.Read(blocks[i])
 		w := binary.BigEndian.AppendUint64(append([]byte(nil), sk.V...), uint64(i))
-		tags[i], err = TagBlock(pdp.SuiteV1, pk, sk, blocks[i], w)
+		tags[i], err = TagBlock(suite.SuiteV1, pk, sk, blocks[i], w)
 		if err != nil {
 			t.Fatalf("TagBlock[%d]: %v", i, err)
 		}
@@ -486,19 +487,19 @@ func TestFullProtocolSmallKeys(t *testing.T) {
 	Gs := new(big.Int).Exp(pk.G, s, pk.N)
 
 	chal := &Challenge{
-		SuiteID: pdp.SuiteV1.ID(),
+		SuiteID: suite.SuiteV1.ID(),
 		C:       4,
 		K1:      k1,
 		K2:      k2,
 		Gs:      Gs,
 	}
 
-	proof, err := GenProof(pdp.SuiteV1, pk, blocks, chal, tags)
+	proof, err := GenProof(suite.SuiteV1, pk, blocks, chal, tags)
 	if err != nil {
 		t.Fatalf("GenProof: %v", err)
 	}
 
-	ok, err := CheckProof(pdp.SuiteV1, pk, sk, s, tags, chal, proof)
+	ok, err := CheckProof(suite.SuiteV1, pk, sk, s, tags, chal, proof)
 	if err != nil {
 		t.Fatalf("CheckProof: %v", err)
 	}
@@ -523,7 +524,7 @@ func TestTamperedBlockFails(t *testing.T) {
 		blocks[i] = make([]byte, 64)
 		rand.Read(blocks[i])
 		w := binary.BigEndian.AppendUint64(append([]byte(nil), sk.V...), uint64(i))
-		tags[i], err = TagBlock(pdp.SuiteV1, pk, sk, blocks[i], w)
+		tags[i], err = TagBlock(suite.SuiteV1, pk, sk, blocks[i], w)
 		if err != nil {
 			t.Fatalf("TagBlock[%d]: %v", i, err)
 		}
@@ -540,7 +541,7 @@ func TestTamperedBlockFails(t *testing.T) {
 	}
 	Gs := new(big.Int).Exp(pk.G, s, pk.N)
 
-	chal := &Challenge{SuiteID: pdp.SuiteV1.ID(), C: 4, K1: k1, K2: k2, Gs: Gs}
+	chal := &Challenge{SuiteID: suite.SuiteV1.ID(), C: 4, K1: k1, K2: k2, Gs: Gs}
 
 	// Tamper every block to guarantee at least one challenged block is corrupted.
 	for i := range nBlocks {
@@ -549,12 +550,12 @@ func TestTamperedBlockFails(t *testing.T) {
 		blocks[i] = tampered
 	}
 
-	proof, err := GenProof(pdp.SuiteV1, pk, blocks, chal, tags)
+	proof, err := GenProof(suite.SuiteV1, pk, blocks, chal, tags)
 	if err != nil {
 		t.Fatalf("GenProof: %v", err)
 	}
 
-	ok, err := CheckProof(pdp.SuiteV1, pk, sk, s, tags, chal, proof)
+	ok, err := CheckProof(suite.SuiteV1, pk, sk, s, tags, chal, proof)
 	if err != nil {
 		t.Fatalf("CheckProof: %v", err)
 	}

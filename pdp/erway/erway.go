@@ -45,6 +45,7 @@ import (
 	"math/big"
 
 	"github.com/pinionengineering/storage-proofs/pdp"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 // ─── Key and tag ─────────────────────────────────────────────────────────────
@@ -63,7 +64,7 @@ func KeyGen(k int) (*pdp.PublicKey, error) {
 // Note: the paper defines T(b) = g^b mod N, but hashing b as the exponent
 // avoids oversized exponents and keeps the scheme secure under the same
 // factoring assumption (HashBlock is modelled as a random oracle).
-func BlockTag(s *pdp.Suite, pk *pdp.PublicKey, block []byte) *big.Int {
+func BlockTag(s *suite.Suite, pk *pdp.PublicKey, block []byte) *big.Int {
 	return new(big.Int).Exp(pk.G, s.HashBlock(block), pk.N)
 }
 
@@ -186,7 +187,7 @@ func (sl *SkipList) rootLabel() []byte {
 
 // Build initialises a SkipList for the given blocks and returns the skip list
 // (server) and the initial basis (client).
-func Build(s *pdp.Suite, pk *pdp.PublicKey, blocks [][]byte) (*SkipList, Basis, error) {
+func Build(s *suite.Suite, pk *pdp.PublicKey, blocks [][]byte) (*SkipList, Basis, error) {
 	if len(blocks) == 0 {
 		return nil, nil, fmt.Errorf("erway.Build: blocks must not be empty")
 	}
@@ -237,13 +238,13 @@ func (sl *SkipList) maxHeight() int {
 }
 
 // appendBlock inserts a new block at the end of the list (position n+1).
-func (sl *SkipList) appendBlock(s *pdp.Suite, pk *pdp.PublicKey, block []byte) error {
+func (sl *SkipList) appendBlock(s *suite.Suite, pk *pdp.PublicKey, block []byte) error {
 	return sl.doInsert(s, pk, sl.n+1, block, coinHeight(sl.maxHeight()))
 }
 
 // doInsert inserts block at 1-indexed position pos with the given tower height h.
 // This is the core insert operation; all existing nodes at positions ≥ pos shift right.
-func (sl *SkipList) doInsert(s *pdp.Suite, pk *pdp.PublicKey, pos int, block []byte, h int) error {
+func (sl *SkipList) doInsert(s *suite.Suite, pk *pdp.PublicKey, pos int, block []byte, h int) error {
 	tagInt := BlockTag(s, pk, block)
 	tagBytes := tagInt.Bytes()
 
@@ -674,7 +675,7 @@ type Proof struct {
 
 // Prove computes the DPDP I proof for the challenged blocks.
 // fetch(i) returns the raw bytes of the 1-indexed block i.
-func Prove(s *pdp.Suite, pk *pdp.PublicKey, sl *SkipList, chal *Challenge, fetch func(int) ([]byte, error)) (*Proof, error) {
+func Prove(s *suite.Suite, pk *pdp.PublicKey, sl *SkipList, chal *Challenge, fetch func(int) ([]byte, error)) (*Proof, error) {
 	if chal.N != sl.n {
 		return nil, fmt.Errorf("erway.Prove: challenge N=%d but skip list n=%d", chal.N, sl.n)
 	}
@@ -756,7 +757,7 @@ type UpdateResult struct {
 }
 
 // PerformUpdate applies an update on the server side.
-func PerformUpdate(s *pdp.Suite, pk *pdp.PublicKey, sl *SkipList, op UpdateOp) (*UpdateResult, error) {
+func PerformUpdate(s *suite.Suite, pk *pdp.PublicKey, sl *SkipList, op UpdateOp) (*UpdateResult, error) {
 	var oldTag []byte
 	var oldSteps []ProofStep
 	var err error
@@ -819,7 +820,7 @@ func PerformUpdate(s *pdp.Suite, pk *pdp.PublicKey, sl *SkipList, op UpdateOp) (
 }
 
 // modifyAt replaces the tag of the block at 1-indexed position pos.
-func (sl *SkipList) modifyAt(s *pdp.Suite, pk *pdp.PublicKey, pos int, block []byte) error {
+func (sl *SkipList) modifyAt(s *suite.Suite, pk *pdp.PublicKey, pos int, block []byte) error {
 	// Find the bottom-level node at pos.
 	v := sl.levels[0]
 	count := 0
