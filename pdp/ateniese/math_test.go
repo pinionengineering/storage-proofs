@@ -1,4 +1,4 @@
-package pdp
+package ateniese
 
 // This file contains tests that verify the mathematical invariants underpinning
 // the S-PDP protocol.  Each test is self-contained and documents the property
@@ -9,6 +9,8 @@ import (
 	"encoding/binary"
 	"math/big"
 	"testing"
+
+	"github.com/pinionengineering/storage-proofs/pdp"
 )
 
 // --- helpers -----------------------------------------------------------------
@@ -17,9 +19,9 @@ import (
 // 64-bit primes are fast enough for unit tests.
 func smallSafePrimes(t *testing.T) (p, pPrime *big.Int) {
 	t.Helper()
-	p, pPrime, err := generateSafePrime(64)
+	p, pPrime, err := pdp.GenerateSafePrime(64)
 	if err != nil {
-		t.Fatalf("generateSafePrime: %v", err)
+		t.Fatalf("GenerateSafePrime: %v", err)
 	}
 	return p, pPrime
 }
@@ -88,14 +90,14 @@ func TestQRNOrderIsPrimeProduct(t *testing.T) {
 }
 
 // TestGroupOrderOfGIsPhiNOver4 verifies that a generator produced by
-// generateGQRN satisfies g^(p'q') ≡ 1 mod N, i.e. its order divides p'q'.
+// GenerateGQRN satisfies g^(p'q') ≡ 1 mod N, i.e. its order divides p'q'.
 func TestGroupOrderOfGIsPhiNOver4(t *testing.T) {
 	_, pp, _, qp, N, _ := newRSAModulus(t)
 	phi := new(big.Int).Mul(pp, qp)
 
-	g, err := generateGQRN(N)
+	g, err := pdp.GenerateGQRN(N)
 	if err != nil {
-		t.Fatalf("generateGQRN: %v", err)
+		t.Fatalf("GenerateGQRN: %v", err)
 	}
 
 	result := new(big.Int).Exp(g, phi, N)
@@ -194,9 +196,9 @@ func TestExponentReductionModGroupOrder(t *testing.T) {
 	_, pp, _, qp, N, _ := newRSAModulus(t)
 	phi := new(big.Int).Mul(pp, qp)
 
-	g, err := generateGQRN(N)
+	g, err := pdp.GenerateGQRN(N)
 	if err != nil {
-		t.Fatalf("generateGQRN: %v", err)
+		t.Fatalf("GenerateGQRN: %v", err)
 	}
 
 	for range 10 {
@@ -227,9 +229,9 @@ func TestMuReductionEquivalence(t *testing.T) {
 	_, pp, _, qp, N, _ := newRSAModulus(t)
 	phi := new(big.Int).Mul(pp, qp)
 
-	g, err := generateGQRN(N)
+	g, err := pdp.GenerateGQRN(N)
 	if err != nil {
-		t.Fatalf("generateGQRN: %v", err)
+		t.Fatalf("GenerateGQRN: %v", err)
 	}
 
 	for range 10 {
@@ -284,9 +286,9 @@ func TestVerificationEquation(t *testing.T) {
 	}
 	d := new(big.Int).ModInverse(e, phi)
 
-	g, err := generateGQRN(N)
+	g, err := pdp.GenerateGQRN(N)
 	if err != nil {
-		t.Fatalf("generateGQRN: %v", err)
+		t.Fatalf("GenerateGQRN: %v", err)
 	}
 
 	// Simulate one block
@@ -355,9 +357,9 @@ func TestVerificationEquationMultiBlock(t *testing.T) {
 	}
 	d := new(big.Int).ModInverse(e, phi)
 
-	g, err := generateGQRN(N)
+	g, err := pdp.GenerateGQRN(N)
 	if err != nil {
-		t.Fatalf("generateGQRN: %v", err)
+		t.Fatalf("GenerateGQRN: %v", err)
 	}
 
 	const C = 5
@@ -410,9 +412,9 @@ func TestVerificationEquationMultiBlock(t *testing.T) {
 	}
 }
 
-// --- 5. generateGQRN output is in QR_N ---------------------------------------
+// --- 5. GenerateGQRN output is in QR_N ---------------------------------------
 
-// TestGenerateGQRNInQRN verifies that generateGQRN always returns a value in QR_N:
+// TestGenerateGQRNInQRN verifies that GenerateGQRN always returns a value in QR_N:
 // g^(p'q') ≡ 1 mod N.  The paper's construction (gcd filters + squaring) ensures
 // QR_N membership; full generator status holds with overwhelming probability.
 func TestGenerateGQRNInQRN(t *testing.T) {
@@ -420,9 +422,9 @@ func TestGenerateGQRNInQRN(t *testing.T) {
 	phi := new(big.Int).Mul(pp, qp)
 
 	for range 20 {
-		g, err := generateGQRN(N)
+		g, err := pdp.GenerateGQRN(N)
 		if err != nil {
-			t.Fatalf("generateGQRN: %v", err)
+			t.Fatalf("GenerateGQRN: %v", err)
 		}
 		if new(big.Int).Exp(g, phi, N).Cmp(big.NewInt(1)) != 0 {
 			t.Fatalf("g^(p'q') != 1: g is not in QR_N")
@@ -432,7 +434,7 @@ func TestGenerateGQRNInQRN(t *testing.T) {
 
 // --- 6. hashToQRN output is in QR_N -----------------------------------------
 
-// TestHashToQRNInQRN verifies that hashToQRN always produces a value in QR_N
+// TestHashToQRNInQRN verifies that pdp.SuiteV1.HashToQRN always produces a value in QR_N
 // (i.e. h^(p'q') ≡ 1 mod N).
 func TestHashToQRNInQRN(t *testing.T) {
 	_, pp, _, qp, N, _ := newRSAModulus(t)
@@ -441,7 +443,7 @@ func TestHashToQRNInQRN(t *testing.T) {
 	for range 20 {
 		data := make([]byte, 32)
 		rand.Read(data)
-		h := mgf1SHA256HashToQRN(data, N)
+		h := pdp.SuiteV1.HashToQRN(data, N)
 		if new(big.Int).Exp(h, phi, N).Cmp(big.NewInt(1)) != 0 {
 			t.Fatalf("h(data)^(p'q') != 1: hashToQRN output is not in QR_N")
 		}
@@ -466,7 +468,7 @@ func TestFullProtocolSmallKeys(t *testing.T) {
 		blocks[i] = make([]byte, 64)
 		rand.Read(blocks[i])
 		w := binary.BigEndian.AppendUint64(append([]byte(nil), sk.V...), uint64(i))
-		tags[i], err = SuiteV1.TagBlock(pk, sk, blocks[i], w)
+		tags[i], err = TagBlock(pdp.SuiteV1, pk, sk, blocks[i], w)
 		if err != nil {
 			t.Fatalf("TagBlock[%d]: %v", i, err)
 		}
@@ -484,19 +486,19 @@ func TestFullProtocolSmallKeys(t *testing.T) {
 	Gs := new(big.Int).Exp(pk.G, s, pk.N)
 
 	chal := &Challenge{
-		SuiteID: SuiteV1.ID(),
+		SuiteID: pdp.SuiteV1.ID(),
 		C:       4,
 		K1:      k1,
 		K2:      k2,
 		Gs:      Gs,
 	}
 
-	proof, err := SuiteV1.GenProof(pk, blocks, chal, tags)
+	proof, err := GenProof(pdp.SuiteV1, pk, blocks, chal, tags)
 	if err != nil {
 		t.Fatalf("GenProof: %v", err)
 	}
 
-	ok, err := SuiteV1.CheckProof(pk, sk, s, tags, chal, proof)
+	ok, err := CheckProof(pdp.SuiteV1, pk, sk, s, tags, chal, proof)
 	if err != nil {
 		t.Fatalf("CheckProof: %v", err)
 	}
@@ -521,7 +523,7 @@ func TestTamperedBlockFails(t *testing.T) {
 		blocks[i] = make([]byte, 64)
 		rand.Read(blocks[i])
 		w := binary.BigEndian.AppendUint64(append([]byte(nil), sk.V...), uint64(i))
-		tags[i], err = SuiteV1.TagBlock(pk, sk, blocks[i], w)
+		tags[i], err = TagBlock(pdp.SuiteV1, pk, sk, blocks[i], w)
 		if err != nil {
 			t.Fatalf("TagBlock[%d]: %v", i, err)
 		}
@@ -538,7 +540,7 @@ func TestTamperedBlockFails(t *testing.T) {
 	}
 	Gs := new(big.Int).Exp(pk.G, s, pk.N)
 
-	chal := &Challenge{SuiteID: SuiteV1.ID(), C: 4, K1: k1, K2: k2, Gs: Gs}
+	chal := &Challenge{SuiteID: pdp.SuiteV1.ID(), C: 4, K1: k1, K2: k2, Gs: Gs}
 
 	// Tamper every block to guarantee at least one challenged block is corrupted.
 	for i := range nBlocks {
@@ -547,12 +549,12 @@ func TestTamperedBlockFails(t *testing.T) {
 		blocks[i] = tampered
 	}
 
-	proof, err := SuiteV1.GenProof(pk, blocks, chal, tags)
+	proof, err := GenProof(pdp.SuiteV1, pk, blocks, chal, tags)
 	if err != nil {
 		t.Fatalf("GenProof: %v", err)
 	}
 
-	ok, err := SuiteV1.CheckProof(pk, sk, s, tags, chal, proof)
+	ok, err := CheckProof(pdp.SuiteV1, pk, sk, s, tags, chal, proof)
 	if err != nil {
 		t.Fatalf("CheckProof: %v", err)
 	}

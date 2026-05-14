@@ -1,10 +1,12 @@
-package pdp
+package ateniese
 
 import (
 	"crypto/rand"
 	"encoding/binary"
 	"math/big"
 	"testing"
+
+	"github.com/pinionengineering/storage-proofs/pdp"
 )
 
 // simpleFile creates n blocks of random 1 KB data.
@@ -35,7 +37,7 @@ func TestPDPChallengeGame(t *testing.T) {
 	tags := make([]*Tag, len(blocks))
 	for i := range blocks {
 		w := binary.BigEndian.AppendUint64(append([]byte(nil), sk.V...), uint64(i))
-		tags[i], err = SuiteV1.TagBlock(pk, sk, blocks[i], w)
+		tags[i], err = TagBlock(pdp.SuiteV1, pk, sk, blocks[i], w)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,7 +61,7 @@ func TestPDPChallengeGame(t *testing.T) {
 	}
 
 	chal := &Challenge{
-		SuiteID: SuiteV1.ID(),
+		SuiteID: pdp.SuiteV1.ID(),
 		C:       4,
 		K1:      k1,
 		K2:      k2,
@@ -67,13 +69,13 @@ func TestPDPChallengeGame(t *testing.T) {
 	}
 
 	// 4. Server generates proof from the blocks and tags.
-	proof, err := SuiteV1.GenProof(pk, blocks, chal, tags)
+	proof, err := GenProof(pdp.SuiteV1, pk, blocks, chal, tags)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// 5. Client verifies the proof using its private s.
-	ok, err := SuiteV1.CheckProof(pk, sk, s, tags, chal, proof)
+	ok, err := CheckProof(pdp.SuiteV1, pk, sk, s, tags, chal, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
