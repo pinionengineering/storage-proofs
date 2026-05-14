@@ -3,29 +3,32 @@ package sw
 import (
 	"fmt"
 	"math/big"
+
+	"github.com/pinionengineering/storage-proofs/pdp"
 )
 
 // PrivScheme wraps the §3.2 private-key scheme and implements the Scheme interface.
 // Create with NewPrivScheme; the embedded secret key is used for tagging and
 // verification.
 type PrivScheme struct {
-	sk *SecretKey
+	suite *pdp.Suite
+	sk    *SecretKey
 }
 
 // NewPrivScheme runs KeyGen and returns a ready PrivScheme.
-func NewPrivScheme(params *Params) (*PrivScheme, error) {
+func NewPrivScheme(suite *pdp.Suite, params *Params) (*PrivScheme, error) {
 	sk, err := KeyGen(params)
 	if err != nil {
 		return nil, fmt.Errorf("sw.NewPrivScheme: %w", err)
 	}
-	return &PrivScheme{sk: sk}, nil
+	return &PrivScheme{suite: suite, sk: sk}, nil
 }
 
 func (ps *PrivScheme) Kind() SchemeKind { return PrivKind }
 
 // TagFile serializes each tag as big-endian Z_P bytes.
 func (ps *PrivScheme) TagFile(file [][]byte) ([][]byte, error) {
-	tags := TagFile(ps.sk, file)
+	tags := TagFile(ps.suite, ps.sk, file)
 	out := make([][]byte, len(tags))
 	for i, t := range tags {
 		out[i] = t.Sigma.Bytes()
@@ -60,5 +63,5 @@ func (ps *PrivScheme) RespondFetch(tags [][]byte, chal *SWChallenge, fetch func(
 func (ps *PrivScheme) Verify(chal *SWChallenge, proof *SWProof) (bool, error) {
 	c := &Challenge{Indices: chal.Indices, Coeffs: chal.Coeffs}
 	p := &Proof{Sigma: new(big.Int).SetBytes(proof.Sigma), Mu: proof.Mu}
-	return Verify(ps.sk, c, p)
+	return Verify(ps.suite, ps.sk, c, p)
 }

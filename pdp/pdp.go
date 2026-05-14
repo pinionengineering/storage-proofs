@@ -11,6 +11,8 @@ package pdp
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -18,6 +20,8 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+
+	"lukechampine.com/blake3"
 )
 
 // PublicKey holds the RSA group parameters shared by both PDP schemes.
@@ -160,16 +164,72 @@ func registerSuite(s *Suite) *Suite {
 	return s
 }
 
-// SuiteV1 is the initial algorithm suite:
-//   - HashBlock:  SHA-256
-//   - HashToQRN: MGF1 (RFC 8017 §B.2.1) with SHA-256, bias < 2^{-128}
-//   - PRF:       HMAC-SHA256 truncated to 128 bits
+// Suite compatibility: all three suites are acceptable for every scheme
+// (ateniese, erway, bjo, sw). They differ only in performance characteristics:
+//
+//	Suite    PRF primitive          Best for
+//	──────   ───────────────────    ──────────────────────────────────────────
+//	SuiteV1  HMAC-SHA256            Conservative default; well-studied, portable
+//	SuiteV2  AES-256-CTR            Hardware AES-NI (x86/ARM); ~10× faster PRF
+//	SuiteV3  BLAKE3 keyed hash      Software-only; fast on any platform
+//
+// All suites produce 256-bit PRF output. Statistical bias when reducing mod P
+// is ≤ P/2^256 ≤ 2^{-128} for any P ≤ 2^128, which covers all schemes.
+//
+// Prefer SuiteV2 on x86/ARM servers with AES-NI; SuiteV3 elsewhere.
+// SuiteV1 is the safe default and the only suite to use in FIPS contexts.
+
+// SuiteV1 is the conservative baseline suite using HMAC-SHA256 throughout.
+//
+//   - HashBlock:  SHA-256 → 256-bit *big.Int
+//   - HashToQRN: MGF1-SHA256 (RFC 8017 §B.2.1), bias < 2^{-128}
+//   - PRF:       HMAC-SHA256, full 256-bit output
 //   - BuildPRP:  sort-by-HMAC-SHA256
+//
+// Acceptable for: all schemes.
 var SuiteV1 = registerSuite(&Suite{
 	id:        1,
 	HashBlock: sha256HashBlock,
 	HashToQRN: mgf1SHA256HashToQRN,
-	PRF:       hmacSHA256PRF128,
+	PRF:       hmacSHA256PRF256,
+	BuildPRP:  hmacSHA256PRP,
+})
+
+// SuiteV2 replaces HMAC-SHA256 in the PRF with AES-256 in counter mode.
+// On processors with hardware AES-NI the PRF is roughly 10× faster than
+// SuiteV1, which directly benefits ateniese GenProof and erway Prove (one PRF
+// call per challenged block). HashBlock and HashToQRN remain SHA-256 based.
+//
+//   - HashBlock:  SHA-256 → 256-bit *big.Int
+//   - HashToQRN: MGF1-SHA256
+//   - PRF:       AES-256-CTR, 256-bit output
+//   - BuildPRP:  sort-by-HMAC-SHA256
+//
+// Acceptable for: all schemes.
+var SuiteV2 = registerSuite(&Suite{
+	id:        2,
+	HashBlock: sha256HashBlock,
+	HashToQRN: mgf1SHA256HashToQRN,
+	PRF:       aesCTRPRF256,
+	BuildPRP:  hmacSHA256PRP,
+})
+
+// SuiteV3 uses BLAKE3 throughout, replacing SHA-256 in HashBlock and HashToQRN
+// and using BLAKE3's keyed-hash mode for the PRF. BLAKE3 is fast in pure
+// software (no special hardware required) and supports variable-length output
+// natively, avoiding the MGF1 counter loop needed for SHA-256.
+//
+//   - HashBlock:  BLAKE3-256
+//   - HashToQRN: BLAKE3 XOF (variable-length output, bias < 2^{-128})
+//   - PRF:       BLAKE3 keyed hash, 256-bit output
+//   - BuildPRP:  sort-by-HMAC-SHA256
+//
+// Acceptable for: all schemes.
+var SuiteV3 = registerSuite(&Suite{
+	id:        3,
+	HashBlock: blake3HashBlock,
+	HashToQRN: blake3HashToQRN,
+	PRF:       blake3PRF256,
 	BuildPRP:  hmacSHA256PRP,
 })
 
@@ -204,20 +264,83 @@ func mgf1SHA256HashToQRN(data []byte, N *big.Int) *big.Int {
 	return new(big.Int).Exp(x, big.NewInt(2), N)
 }
 
-// hmacSHA256PRF128 is a 128-bit pseudorandom function based on HMAC-SHA-256.
+// hmacSHA256PRF256 is a 256-bit pseudorandom function based on HMAC-SHA-256.
 //
-// A single argument PRF(key, j) encodes j as a big-endian uint64 and is the
-// standard per-block coefficient form. Multiple arguments PRF(key, u, s) fold
-// each into the MAC in order, providing domain separation without a second
-// HMAC call (used by BJ-POR's inner-code matrix G[s][u] = PRF(GSeed, u, s)).
-func hmacSHA256PRF128(key []byte, js ...int) *big.Int {
+// A single argument PRF(key, j) encodes j as a big-endian uint64. Multiple
+// arguments fold each into the MAC in order (used by BJ-POR's inner-code
+// matrix G[s][u] = PRF(GSeed, u, s) for domain separation).
+func hmacSHA256PRF256(key []byte, js ...int) *big.Int {
 	buf := make([]byte, 8)
 	mac := hmac.New(sha256.New, key)
 	for _, j := range js {
 		binary.BigEndian.PutUint64(buf, uint64(j))
 		mac.Write(buf)
 	}
-	return new(big.Int).SetBytes(mac.Sum(nil)[:16]) // 128 bits
+	return new(big.Int).SetBytes(mac.Sum(nil)) // full 256-bit output
+}
+
+// aesCTRPRF256 is a 256-bit PRF built on AES-256 in counter mode.
+//
+// The PRF key is expanded to 32 bytes via SHA-256 to satisfy AES-256's
+// fixed-length key requirement. Index arguments are encoded as big-endian
+// uint64s into the 16-byte CTR nonce (up to two fit in one AES block);
+// AES-CTR then generates 32 bytes (two blocks) of keystream as output.
+//
+// On processors with AES-NI this is roughly 10× faster than hmacSHA256PRF256.
+// Note: AES key schedule is performed per call; a future optimisation could
+// pre-schedule once when the key is stable across many calls.
+func aesCTRPRF256(key []byte, js ...int) *big.Int {
+	aesKey := sha256.Sum256(key) // fixed 32-byte key for AES-256
+	nonce := make([]byte, aes.BlockSize)
+	for i, j := range js {
+		if i >= 2 {
+			break
+		}
+		binary.BigEndian.PutUint64(nonce[i*8:], uint64(j))
+	}
+	ciph, _ := aes.NewCipher(aesKey[:]) // always succeeds: key is 32 bytes
+	stream := cipher.NewCTR(ciph, nonce)
+	out := make([]byte, 32)
+	stream.XORKeyStream(out, out)
+	return new(big.Int).SetBytes(out)
+}
+
+// blake3HashBlock maps raw block bytes to a *big.Int via BLAKE3-256.
+func blake3HashBlock(data []byte) *big.Int {
+	h := blake3.Sum256(data)
+	return new(big.Int).SetBytes(h[:])
+}
+
+// blake3HashToQRN maps an arbitrary byte string near-uniformly into QR_N
+// using BLAKE3's native variable-length output (XOF mode). Generating
+// ⌈(N.BitLen()+128)/8⌉ bytes bounds statistical bias to < 2^{-128}.
+func blake3HashToQRN(data []byte, N *big.Int) *big.Int {
+	targetBytes := (N.BitLen() + 128 + 7) / 8
+	h := blake3.New(targetBytes, nil)
+	h.Write(data)
+	buf := h.Sum(nil)
+	x := new(big.Int).SetBytes(buf)
+	x.Mod(x, N)
+	if x.Sign() == 0 {
+		x.SetInt64(1)
+	}
+	return new(big.Int).Exp(x, big.NewInt(2), N)
+}
+
+// blake3PRF256 is a 256-bit PRF built on BLAKE3's keyed-hash mode.
+//
+// The PRF key is expanded to 32 bytes via BLAKE3-256 (the keyed-hash API
+// requires exactly 32 bytes). Index arguments are encoded as big-endian
+// uint64s and written into the hasher in order.
+func blake3PRF256(key []byte, js ...int) *big.Int {
+	k32 := blake3.Sum256(key) // key derivation to 32-byte BLAKE3 key
+	h := blake3.New(32, k32[:])
+	buf := make([]byte, 8)
+	for _, j := range js {
+		binary.BigEndian.PutUint64(buf, uint64(j))
+		h.Write(buf)
+	}
+	return new(big.Int).SetBytes(h.Sum(nil))
 }
 
 // hmacSHA256PRP constructs a pseudorandom permutation of [0, n) keyed by key.

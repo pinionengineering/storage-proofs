@@ -8,6 +8,8 @@ import (
 	"crypto/rand"
 	"math/big"
 	"testing"
+
+	"github.com/pinionengineering/storage-proofs/pdp"
 )
 
 var testP = func() *big.Int {
@@ -47,10 +49,10 @@ func TestTagEquation(t *testing.T) {
 	block := make([]byte, 48) // 48 bytes / 3 sectors = 16 bytes per sector
 	rand.Read(block)
 
-	tags := TagFile(sk, [][]byte{block})
+	tags := TagFile(pdp.SuiteV1, sk, [][]byte{block})
 
 	// Compute expected σ_0 directly.
-	expected := new(big.Int).Mod(tagPRF(k, 0), P)
+	expected := new(big.Int).Mod(pdp.SuiteV1.PRF(k, 0), P)
 	for j := range params.S {
 		fij := sectorElem(block, j, params.S, P)
 		expected.Add(expected, new(big.Int).Mul(fij, alpha[j]))
@@ -62,17 +64,17 @@ func TestTagEquation(t *testing.T) {
 	}
 }
 
-// TestTagPRFDeterministic verifies that tagPRF(K, i) is deterministic:
+// TestTagPRFDeterministic verifies that pdp.SuiteV1.PRF(K, i) is deterministic:
 // calling it twice with the same key and index yields the same value.
 func TestTagPRFDeterministic(t *testing.T) {
 	k := make([]byte, 32)
 	rand.Read(k)
 
 	for _, i := range []int{0, 1, 99, 1000} {
-		v1 := tagPRF(k, i)
-		v2 := tagPRF(k, i)
+		v1 := pdp.SuiteV1.PRF(k, i)
+		v2 := pdp.SuiteV1.PRF(k, i)
 		if v1.Cmp(v2) != 0 {
-			t.Fatalf("tagPRF not deterministic at i=%d", i)
+			t.Fatalf("PRF not deterministic at i=%d", i)
 		}
 	}
 }
@@ -83,10 +85,10 @@ func TestTagPRFDistinct(t *testing.T) {
 	k := make([]byte, 32)
 	rand.Read(k)
 
-	v0 := tagPRF(k, 0)
-	v1 := tagPRF(k, 1)
+	v0 := pdp.SuiteV1.PRF(k, 0)
+	v1 := pdp.SuiteV1.PRF(k, 1)
 	if v0.Cmp(v1) == 0 {
-		t.Fatal("tagPRF(K, 0) == tagPRF(K, 1) — collision (negligible probability)")
+		t.Fatal("pdp.SuiteV1.PRF(K, 0) == pdp.SuiteV1.PRF(K, 1) — collision (negligible probability)")
 	}
 }
 
@@ -167,7 +169,7 @@ func TestVerificationEquation(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags := TagFile(sk, file)
+	tags := TagFile(pdp.SuiteV1, sk, file)
 
 	chal, err := MakeChallenge(len(file), params)
 	if err != nil {
@@ -183,7 +185,7 @@ func TestVerificationEquation(t *testing.T) {
 	expected := big.NewInt(0)
 	for t2, idx := range chal.Indices {
 		nu := chal.Coeffs[t2]
-		prf := new(big.Int).Mod(tagPRF(sk.K, idx), P)
+		prf := new(big.Int).Mod(pdp.SuiteV1.PRF(sk.K, idx), P)
 		expected.Add(expected, new(big.Int).Mul(nu, prf))
 		expected.Mod(expected, P)
 	}
@@ -196,7 +198,7 @@ func TestVerificationEquation(t *testing.T) {
 		t.Fatalf("verification equation: proof.Sigma = %v, expected = %v", proof.Sigma, expected)
 	}
 
-	ok, err := Verify(sk, chal, proof)
+	ok, err := Verify(pdp.SuiteV1, sk, chal, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +224,7 @@ func TestVerificationEquationTamperedMu(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags := TagFile(sk, file)
+	tags := TagFile(pdp.SuiteV1, sk, file)
 
 	chal, _ := MakeChallenge(len(file), params)
 	proof, _ := Respond(params, file, tags, chal)
@@ -231,7 +233,7 @@ func TestVerificationEquationTamperedMu(t *testing.T) {
 	proof.Mu[0].Add(proof.Mu[0], big.NewInt(1))
 	proof.Mu[0].Mod(proof.Mu[0], P)
 
-	ok, err := Verify(sk, chal, proof)
+	ok, err := Verify(pdp.SuiteV1, sk, chal, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +257,7 @@ func TestVerificationEquationTamperedSigma(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags := TagFile(sk, file)
+	tags := TagFile(pdp.SuiteV1, sk, file)
 
 	chal, _ := MakeChallenge(len(file), params)
 	proof, _ := Respond(params, file, tags, chal)
@@ -263,7 +265,7 @@ func TestVerificationEquationTamperedSigma(t *testing.T) {
 	proof.Sigma.Add(proof.Sigma, big.NewInt(1))
 	proof.Sigma.Mod(proof.Sigma, P)
 
-	ok, err := Verify(sk, chal, proof)
+	ok, err := Verify(pdp.SuiteV1, sk, chal, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +377,7 @@ func TestProofSigmaLinearity(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags := TagFile(sk, file)
+	tags := TagFile(pdp.SuiteV1, sk, file)
 
 	chal, err := MakeChallenge(len(file), params)
 	if err != nil {
@@ -412,7 +414,7 @@ func TestProofMuLinearity(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags := TagFile(sk, file)
+	tags := TagFile(pdp.SuiteV1, sk, file)
 
 	chal, _ := MakeChallenge(len(file), params)
 	proof, _ := Respond(params, file, tags, chal)

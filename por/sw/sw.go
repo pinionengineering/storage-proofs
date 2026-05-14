@@ -56,12 +56,11 @@
 package sw
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"math/big"
+
+	"github.com/pinionengineering/storage-proofs/pdp"
 )
 
 // ---------------------------------------------------------------------------
@@ -125,16 +124,6 @@ type Proof struct {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// tagPRF returns HMAC-SHA-256(K, encode(i)) as a *big.Int (256 bits, unreduced).
-// Callers reduce mod P themselves.
-func tagPRF(k []byte, i int) *big.Int {
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(i))
-	mac := hmac.New(sha256.New, k)
-	mac.Write(buf)
-	return new(big.Int).SetBytes(mac.Sum(nil))
-}
-
 // sectorElem returns the j-th sector of block (0-indexed) as a Z_P element.
 // The block is divided into s equal-sized slices; the last slice may be shorter.
 // Returns 0 for j beyond the block (zero padding for short blocks).
@@ -183,11 +172,11 @@ func KeyGen(params *Params) (*SecretKey, error) {
 // retaining only sk.
 //
 // σ_i = PRF_K(i) mod P + Σ_{j=1}^S f_{i,j}·α_j  mod P
-func TagFile(sk *SecretKey, file [][]byte) []*Tag {
+func TagFile(s *pdp.Suite, sk *SecretKey, file [][]byte) []*Tag {
 	p := sk.Params
 	tags := make([]*Tag, len(file))
 	for i, block := range file {
-		sigma := new(big.Int).Mod(tagPRF(sk.K, i), p.P)
+		sigma := new(big.Int).Mod(s.PRF(sk.K, i), p.P)
 		for j := range p.S {
 			fij := sectorElem(block, j, p.S, p.P)
 			sigma.Add(sigma, new(big.Int).Mul(fij, sk.Alpha[j]))
@@ -297,7 +286,7 @@ func Respond(params *Params, file [][]byte, tags []*Tag, chal *Challenge) (*Proo
 // secret scalars α, then compares it to proof.Sigma.
 //
 // §3: "σ == Σ_t ν_t·PRF_K(i_t) + Σ_j μ_j·α_j  mod P"
-func Verify(sk *SecretKey, chal *Challenge, proof *Proof) (bool, error) {
+func Verify(s *pdp.Suite, sk *SecretKey, chal *Challenge, proof *Proof) (bool, error) {
 	p := sk.Params
 	P := p.P
 
@@ -310,7 +299,7 @@ func Verify(sk *SecretKey, chal *Challenge, proof *Proof) (bool, error) {
 	// Σ_t ν_t · PRF_K(i_t) mod P
 	for t, idx := range chal.Indices {
 		nu := chal.Coeffs[t]
-		prf := new(big.Int).Mod(tagPRF(sk.K, idx), P)
+		prf := new(big.Int).Mod(s.PRF(sk.K, idx), P)
 		expected.Add(expected, new(big.Int).Mul(nu, prf))
 		expected.Mod(expected, P)
 	}
