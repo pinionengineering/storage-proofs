@@ -3,6 +3,8 @@ package bjo
 import (
 	"math/big"
 	"testing"
+
+	"github.com/pinionengineering/storage-proofs/pdp"
 )
 
 // simpleFile creates n blocks of random 32-byte data.
@@ -36,7 +38,7 @@ func TestPORChallengeGame(t *testing.T) {
 	// 2. Encode: client applies SA-ECC and precomputes Q sentinel values.
 	//    In a real deployment the client uploads ef to the server and deletes it.
 	blocks := simpleFile(t, 100)
-	ef, err := Encode(mk, blocks)
+	ef, err := Encode(pdp.SuiteV1, mk, blocks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +59,7 @@ func TestPORChallengeGame(t *testing.T) {
 			t.Fatalf("MakeChallenge(j=%d): %v", j, err)
 		}
 
-		resp, err := Respond(ef, chal)
+		resp, err := Respond(pdp.SuiteV1, ef, chal)
 		if err != nil {
 			t.Fatalf("Respond(j=%d): %v", j, err)
 		}
@@ -91,7 +93,7 @@ func TestPORTamperedBlockDetected(t *testing.T) {
 	}
 
 	blocks := simpleFile(t, 50)
-	ef, err := Encode(mk, blocks)
+	ef, err := Encode(pdp.SuiteV1, mk, blocks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +107,7 @@ func TestPORTamperedBlockDetected(t *testing.T) {
 	anyFailed := false
 	for j := 1; j <= mk.Params.Q; j++ {
 		chal, _ := MakeChallenge(mk, j)
-		resp, _ := Respond(ef, chal)
+		resp, _ := Respond(pdp.SuiteV1, ef, chal)
 		ok, err := Verify(mk, chal, resp)
 		if err != nil {
 			t.Fatalf("Verify(j=%d): %v", j, err)

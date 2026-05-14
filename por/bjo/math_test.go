@@ -320,7 +320,7 @@ func TestInnerCodeLinearity(t *testing.T) {
 	mF := big.NewInt(0)
 	mG := big.NewInt(0)
 	for s := range v {
-		Gsu := innerCodeElement(gseed, s+1, u, P)
+		Gsu := innerCodeElement(pdp.SuiteV1, gseed, s+1, u, P)
 		aFs := new(big.Int).Mod(new(big.Int).Mul(a, F[s]), P)
 		bGs := new(big.Int).Mod(new(big.Int).Mul(b, G[s]), P)
 		combo := new(big.Int).Mod(new(big.Int).Add(aFs, bGs), P)
@@ -354,8 +354,8 @@ func TestInnerCodeConsistency(t *testing.T) {
 	indices := []int{0, 3, 7, 11, 19}
 	u := 2
 
-	m1 := computeInnerResponse(blocks, indices, gseed, u, P)
-	m2 := computeInnerResponse(blocks, indices, gseed, u, P)
+	m1 := computeInnerResponse(pdp.SuiteV1, blocks, indices, gseed, u, P)
+	m2 := computeInnerResponse(pdp.SuiteV1, blocks, indices, gseed, u, P)
 	if m1.Cmp(m2) != 0 {
 		t.Fatal("computeInnerResponse is not deterministic")
 	}
@@ -370,8 +370,8 @@ func TestInnerCodeDifferentColumns(t *testing.T) {
 	blocks := randomBlocks(t, 10, 32)
 	indices := []int{0, 2, 4, 6, 8}
 
-	m1 := computeInnerResponse(blocks, indices, gseed, 1, P)
-	m2 := computeInnerResponse(blocks, indices, gseed, 2, P)
+	m1 := computeInnerResponse(pdp.SuiteV1, blocks, indices, gseed, 1, P)
+	m2 := computeInnerResponse(pdp.SuiteV1, blocks, indices, gseed, 2, P)
 	if m1.Cmp(m2) == 0 {
 		t.Fatal("different u columns produced the same response (negligible probability)")
 	}
@@ -388,7 +388,7 @@ func TestInnerCodeElementDerivedFromPDPPRF(t *testing.T) {
 
 	expected := new(big.Int).Mod(pdp.SuiteV1.PRF(gseed, u, s), P)
 
-	got := innerCodeElement(gseed, s, u, P)
+	got := innerCodeElement(pdp.SuiteV1, gseed, s, u, P)
 	if got.Cmp(expected) != 0 {
 		t.Fatalf("innerCodeElement(%d,%d): got %v, want %v", s, u, got, expected)
 	}
@@ -417,7 +417,7 @@ func TestVerificationEquation(t *testing.T) {
 	u := 5
 
 	// Client-side (Encode): compute and encrypt M.
-	M := computeInnerResponse(blocks, indices, gseed, u, P)
+	M := computeInnerResponse(pdp.SuiteV1, blocks, indices, gseed, u, P)
 	Mbytes := mToBytes(M, P)
 	Q, err := sentinelEncrypt(kje, Mbytes)
 	if err != nil {
@@ -425,7 +425,7 @@ func TestVerificationEquation(t *testing.T) {
 	}
 
 	// Server-side (Respond): compute M independently.
-	Mserver := computeInnerResponse(blocks, indices, gseed, u, P)
+	Mserver := computeInnerResponse(pdp.SuiteV1, blocks, indices, gseed, u, P)
 
 	// Verify: client decrypts Q and compares.
 	decrypted, err := sentinelDecrypt(kje, Q)
@@ -458,7 +458,7 @@ func TestVerificationEquationTamperedBlock(t *testing.T) {
 	u := 3
 
 	// Pre-compute with original blocks.
-	M := computeInnerResponse(blocks, indices, gseed, u, P)
+	M := computeInnerResponse(pdp.SuiteV1, blocks, indices, gseed, u, P)
 	Q, err := sentinelEncrypt(kje, mToBytes(M, P))
 	if err != nil {
 		t.Fatalf("sentinelEncrypt: %v", err)
@@ -468,7 +468,7 @@ func TestVerificationEquationTamperedBlock(t *testing.T) {
 	blocks[0] = randomBlock(t, 32)
 
 	// Server computes M with corrupted block.
-	Mcorrupted := computeInnerResponse(blocks, indices, gseed, u, P)
+	Mcorrupted := computeInnerResponse(pdp.SuiteV1, blocks, indices, gseed, u, P)
 
 	decrypted, err := sentinelDecrypt(kje, Q)
 	if err != nil {
@@ -579,7 +579,7 @@ func TestSAECCSystematic(t *testing.T) {
 	kECCPerm := randomBlock(t, 32)
 	kECCEnc := randomBlock(t, 32)
 
-	encoded, err := saeccEncode(blocks, outerN, outerK, kPerm, kECCPerm, kECCEnc)
+	encoded, err := saeccEncode(pdp.SuiteV1, blocks, outerN, outerK, kPerm, kECCPerm, kECCEnc)
 	if err != nil {
 		t.Fatalf("saeccEncode: %v", err)
 	}
@@ -611,7 +611,7 @@ func TestSAECCParityCount(t *testing.T) {
 		kECCPerm := randomBlock(t, 32)
 		kECCEnc := randomBlock(t, 32)
 
-		encoded, err := saeccEncode(blocks, tc.n, tc.k, kPerm, kECCPerm, kECCEnc)
+		encoded, err := saeccEncode(pdp.SuiteV1, blocks, tc.n, tc.k, kPerm, kECCPerm, kECCEnc)
 		if err != nil {
 			t.Fatalf("saeccEncode(m=%d,k=%d,n=%d): %v", tc.m, tc.k, tc.n, err)
 		}
@@ -644,7 +644,7 @@ func TestFullProtocolSmallParams(t *testing.T) {
 	}
 
 	blocks := randomBlocks(t, 8, 32)
-	ef, err := Encode(mk, blocks)
+	ef, err := Encode(pdp.SuiteV1, mk, blocks)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
@@ -654,7 +654,7 @@ func TestFullProtocolSmallParams(t *testing.T) {
 		if err != nil {
 			t.Fatalf("MakeChallenge(j=%d): %v", j, err)
 		}
-		resp, err := Respond(ef, chal)
+		resp, err := Respond(pdp.SuiteV1, ef, chal)
 		if err != nil {
 			t.Fatalf("Respond(j=%d): %v", j, err)
 		}
@@ -685,7 +685,7 @@ func TestTamperedBlockFails(t *testing.T) {
 	}
 
 	blocks := randomBlocks(t, 8, 32)
-	ef, err := Encode(mk, blocks)
+	ef, err := Encode(pdp.SuiteV1, mk, blocks)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
@@ -698,7 +698,7 @@ func TestTamperedBlockFails(t *testing.T) {
 	anyFailed := false
 	for j := 1; j <= params.Q; j++ {
 		chal, _ := MakeChallenge(mk, j)
-		resp, _ := Respond(ef, chal)
+		resp, _ := Respond(pdp.SuiteV1, ef, chal)
 		ok, err := Verify(mk, chal, resp)
 		if err != nil {
 			t.Fatalf("Verify(j=%d): %v", j, err)
