@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"testing"
 
+	blockstore "github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
 
@@ -37,7 +38,7 @@ func encodeFile(t *testing.T, params *Params, numBlocks int) (*MasterKey, *Encod
 		t.Fatalf("KeyGen: %v", err)
 	}
 	blocks := randomBlocks(t, numBlocks, 32)
-	ef, err := Encode(suite.SuiteV1, mk, blocks)
+	ef, err := Encode(suite.SuiteV1, mk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
@@ -331,7 +332,7 @@ func TestExtractAfterFullChallengeGame(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := randomBlocks(t, 12, 32)
-	ef, err := Encode(suite.SuiteV1, mk, original)
+	ef, err := Encode(suite.SuiteV1, mk, blockstore.NewMemStore(original))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +385,7 @@ func TestRespondExtractDeterministic(t *testing.T) {
 		t.Fatalf("KeyGen: %v", err)
 	}
 	blocks := randomBlocks(t, 12, 3) // 3-byte blocks fit in Z_P = 2^31-1
-	ef, err := Encode(suite.SuiteV1, mk, blocks)
+	ef, err := Encode(suite.SuiteV1, mk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
@@ -413,7 +414,7 @@ func TestRespondExtractDifferentColumns(t *testing.T) {
 		t.Fatalf("KeyGen: %v", err)
 	}
 	blocks := randomBlocks(t, 12, 3)
-	ef, err := Encode(suite.SuiteV1, mk, blocks)
+	ef, err := Encode(suite.SuiteV1, mk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
@@ -435,7 +436,7 @@ func TestRespondExtractRangeCheck(t *testing.T) {
 		t.Fatalf("KeyGen: %v", err)
 	}
 	blocks := randomBlocks(t, 8, 3)
-	ef, err := Encode(suite.SuiteV1, mk, blocks)
+	ef, err := Encode(suite.SuiteV1, mk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
@@ -526,7 +527,7 @@ func TestExtractPhaseIHonest(t *testing.T) {
 		t.Fatalf("KeyGen: %v", err)
 	}
 	original := randomBlocks(t, 12, 3)
-	ef, err := Encode(suite.SuiteV1, mk, original)
+	ef, err := Encode(suite.SuiteV1, mk, blockstore.NewMemStore(original))
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
@@ -549,7 +550,7 @@ func TestExtractPhaseIShortFile(t *testing.T) {
 		t.Fatalf("KeyGen: %v", err)
 	}
 	original := randomBlocks(t, 9, 3) // OuterK=4 → last stripe has 1 block
-	ef, err := Encode(suite.SuiteV1, mk, original)
+	ef, err := Encode(suite.SuiteV1, mk, blockstore.NewMemStore(original))
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}

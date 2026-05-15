@@ -44,6 +44,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/pdp"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
@@ -187,8 +188,8 @@ func (sl *SkipList) rootLabel() []byte {
 
 // Build initialises a SkipList for the given blocks and returns the skip list
 // (server) and the initial basis (client).
-func Build(s *suite.Suite, pk *pdp.PublicKey, blocks [][]byte) (*SkipList, Basis, error) {
-	if len(blocks) == 0 {
+func Build(s *suite.Suite, pk *pdp.PublicKey, store blocks.BlockStore) (*SkipList, Basis, error) {
+	if store.Len() == 0 {
 		return nil, nil, fmt.Errorf("erway.Build: blocks must not be empty")
 	}
 
@@ -200,7 +201,11 @@ func Build(s *suite.Suite, pk *pdp.PublicKey, blocks [][]byte) (*SkipList, Basis
 
 	sl := &SkipList{levels: []*slNode{leftSent}}
 
-	for i, b := range blocks {
+	for i := range store.Len() {
+		b, err := store.Block(i)
+		if err != nil {
+			return nil, nil, fmt.Errorf("erway.Build: block %d: %w", i, err)
+		}
 		if err := sl.appendBlock(s, pk, b); err != nil {
 			return nil, nil, fmt.Errorf("erway.Build: block %d: %w", i, err)
 		}
@@ -674,8 +679,8 @@ type Proof struct {
 }
 
 // Prove computes the DPDP I proof for the challenged blocks.
-// fetch(i) returns the raw bytes of the 1-indexed block i.
-func Prove(s *suite.Suite, pk *pdp.PublicKey, sl *SkipList, chal *Challenge, fetch func(int) ([]byte, error)) (*Proof, error) {
+// store is 0-indexed; erway uses 1-indexed positions internally, so Block(idx-1) is called.
+func Prove(s *suite.Suite, pk *pdp.PublicKey, sl *SkipList, chal *Challenge, store blocks.BlockStore) (*Proof, error) {
 	if chal.N != sl.n {
 		return nil, fmt.Errorf("erway.Prove: challenge N=%d but skip list n=%d", chal.N, sl.n)
 	}
@@ -690,9 +695,9 @@ func Prove(s *suite.Suite, pk *pdp.PublicKey, sl *SkipList, chal *Challenge, fet
 		}
 		bps[t] = BlockProof{Tag: tagBytes, Steps: steps}
 
-		block, err := fetch(idx)
+		block, err := store.Block(idx - 1) // erway uses 1-indexed positions; BlockStore is 0-indexed
 		if err != nil {
-			return nil, fmt.Errorf("erway.Prove: fetch(%d): %w", idx, err)
+			return nil, fmt.Errorf("erway.Prove: block %d: %w", idx, err)
 		}
 		M.Add(M, new(big.Int).Mul(chal.Coeffs[t], s.HashBlock(block)))
 	}

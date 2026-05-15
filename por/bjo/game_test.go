@@ -4,6 +4,7 @@ import (
 	"math/big"
 	"testing"
 
+	blockstore "github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
 
@@ -38,7 +39,7 @@ func TestPORChallengeGame(t *testing.T) {
 	// 2. Encode: client applies SA-ECC and precomputes Q sentinel values.
 	//    In a real deployment the client uploads ef to the server and deletes it.
 	blocks := simpleFile(t, 100)
-	ef, err := Encode(suite.SuiteV1, mk, blocks)
+	ef, err := Encode(suite.SuiteV1, mk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +94,7 @@ func TestPORTamperedBlockDetected(t *testing.T) {
 	}
 
 	blocks := simpleFile(t, 50)
-	ef, err := Encode(suite.SuiteV1, mk, blocks)
+	ef, err := Encode(suite.SuiteV1, mk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatal(err)
 	}

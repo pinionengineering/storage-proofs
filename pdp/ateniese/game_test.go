@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"testing"
 
+	blockstore "github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
 
@@ -69,7 +70,7 @@ func TestPDPChallengeGame(t *testing.T) {
 	}
 
 	// 4. Server generates proof from the blocks and tags.
-	proof, err := GenProof(suite.SuiteV1, pk, blocks, chal, tags)
+	proof, err := GenProof(suite.SuiteV1, pk, blockstore.NewMemStore(blocks), chal, tags)
 	if err != nil {
 		t.Fatal(err)
 	}

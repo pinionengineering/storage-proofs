@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
 
@@ -49,7 +50,10 @@ func TestTagEquation(t *testing.T) {
 	block := make([]byte, 48) // 48 bytes / 3 sectors = 16 bytes per sector
 	rand.Read(block)
 
-	tags := TagFile(suite.SuiteV1, sk, [][]byte{block})
+	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore([][]byte{block}))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Compute expected σ_0 directly.
 	expected := new(big.Int).Mod(suite.SuiteV1.PRF(k, 0), P)
@@ -169,14 +173,17 @@ func TestVerificationEquation(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags := TagFile(suite.SuiteV1, sk, file)
+	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	chal, err := MakeChallenge(len(file), params)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	proof, err := Respond(params, file, tags, chal)
+	proof, err := Respond(params, blocks.NewMemStore(file), tags, chal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,10 +231,10 @@ func TestVerificationEquationTamperedMu(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags := TagFile(suite.SuiteV1, sk, file)
+	tags, _ := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
 	chal, _ := MakeChallenge(len(file), params)
-	proof, _ := Respond(params, file, tags, chal)
+	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
 
 	// Flip one μ value.
 	proof.Mu[0].Add(proof.Mu[0], big.NewInt(1))
@@ -257,10 +264,10 @@ func TestVerificationEquationTamperedSigma(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags := TagFile(suite.SuiteV1, sk, file)
+	tags, _ := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
 	chal, _ := MakeChallenge(len(file), params)
-	proof, _ := Respond(params, file, tags, chal)
+	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
 
 	proof.Sigma.Add(proof.Sigma, big.NewInt(1))
 	proof.Sigma.Mod(proof.Sigma, P)
@@ -377,14 +384,17 @@ func TestProofSigmaLinearity(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags := TagFile(suite.SuiteV1, sk, file)
+	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	chal, err := MakeChallenge(len(file), params)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	proof, err := Respond(params, file, tags, chal)
+	proof, err := Respond(params, blocks.NewMemStore(file), tags, chal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,10 +424,10 @@ func TestProofMuLinearity(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags := TagFile(suite.SuiteV1, sk, file)
+	tags, _ := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
 	chal, _ := MakeChallenge(len(file), params)
-	proof, _ := Respond(params, file, tags, chal)
+	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
 
 	idx := chal.Indices[0]
 	nu := chal.Coeffs[0]

@@ -62,6 +62,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
 
@@ -174,10 +175,15 @@ func KeyGen(params *Params) (*SecretKey, error) {
 // retaining only sk.
 //
 // σ_i = PRF_K(i) mod P + Σ_{j=1}^S f_{i,j}·α_j  mod P
-func TagFile(s *suite.Suite, sk *SecretKey, file [][]byte) []*Tag {
+func TagFile(s *suite.Suite, sk *SecretKey, store blocks.BlockStore) ([]*Tag, error) {
 	p := sk.Params
-	tags := make([]*Tag, len(file))
-	for i, block := range file {
+	n := store.Len()
+	tags := make([]*Tag, n)
+	for i := range n {
+		block, err := store.Block(i)
+		if err != nil {
+			return nil, fmt.Errorf("sw.TagFile: block %d: %w", i, err)
+		}
 		sigma := new(big.Int).Mod(s.PRF(sk.K, i), p.P)
 		for j := range p.S {
 			fij := sectorElem(block, j, p.S, p.P)
@@ -186,7 +192,7 @@ func TagFile(s *suite.Suite, sk *SecretKey, file [][]byte) []*Tag {
 		}
 		tags[i] = &Tag{Sigma: sigma}
 	}
-	return tags
+	return tags, nil
 }
 
 // MakeChallenge generates a fresh random challenge for a file of n blocks.
@@ -232,12 +238,12 @@ func MakeChallenge(n int, params *Params) (*Challenge, error) {
 	return &Challenge{Indices: indices, Coeffs: coeffs}, nil
 }
 
-// RespondFetch is the core server-side proof function. It calls fetch(idx) for
+// RespondFetch is the core server-side proof function. It calls store.Block(idx) for
 // each challenged block index to obtain raw bytes, accumulates the linear
 // combination across sectors and tags, and returns the proof.
 //
 // Only the L challenged blocks are fetched; the remaining n-L are not accessed.
-func RespondFetch(params *Params, tags []*Tag, chal *Challenge, fetch func(idx int) ([]byte, error)) (*Proof, error) {
+func RespondFetch(params *Params, tags []*Tag, chal *Challenge, store blocks.BlockStore) (*Proof, error) {
 	P := params.P
 	sigma := big.NewInt(0)
 	mu := make([]*big.Int, params.S)
@@ -251,7 +257,7 @@ func RespondFetch(params *Params, tags []*Tag, chal *Challenge, fetch func(idx i
 		}
 		nu := chal.Coeffs[t]
 
-		data, err := fetch(idx)
+		data, err := store.Block(idx)
 		if err != nil {
 			return nil, fmt.Errorf("sw.RespondFetch: block %d: %w", idx, err)
 		}
@@ -272,14 +278,9 @@ func RespondFetch(params *Params, tags []*Tag, chal *Challenge, fetch func(idx i
 }
 
 // Respond is run by the server to answer a challenge.
-// It reads blocks directly from file and delegates to RespondFetch.
-func Respond(params *Params, file [][]byte, tags []*Tag, chal *Challenge) (*Proof, error) {
-	return RespondFetch(params, tags, chal, func(idx int) ([]byte, error) {
-		if idx < 0 || idx >= len(file) {
-			return nil, fmt.Errorf("index %d out of range", idx)
-		}
-		return file[idx], nil
-	})
+// It reads blocks directly from store and delegates to RespondFetch.
+func Respond(params *Params, store blocks.BlockStore, tags []*Tag, chal *Challenge) (*Proof, error) {
+	return RespondFetch(params, tags, chal, store)
 }
 
 // Verify checks whether the server's proof is valid.

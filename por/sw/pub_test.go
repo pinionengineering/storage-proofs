@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cloudflare/bn256"
+	"github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
 
@@ -29,7 +30,7 @@ func TestPubChallengeGame(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 20, 32)
 
-	tags, err := ps.TagFile(file)
+	tags, err := ps.TagFile(blocks.NewMemStore(file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,9 +43,7 @@ func TestPubChallengeGame(t *testing.T) {
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
-		proof, err := ps.RespondFetch(tags, chal, func(i int) ([]byte, error) {
-			return file[i], nil
-		})
+		proof, err := ps.RespondFetch(tags, chal, blocks.NewMemStore(file))
 		if err != nil {
 			t.Fatalf("RespondFetch(round=%d): %v", round, err)
 		}
@@ -66,11 +65,9 @@ func TestVerifyPub(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 15, 32)
 
-	tags, _ := ps.TagFile(file)
+	tags, _ := ps.TagFile(blocks.NewMemStore(file))
 	chal, _ := ps.MakeChallenge(len(file))
-	proof, _ := ps.RespondFetch(tags, chal, func(i int) ([]byte, error) {
-		return file[i], nil
-	})
+	proof, _ := ps.RespondFetch(tags, chal, blocks.NewMemStore(file))
 
 	pk := ps.PubKey()
 	ok, err := VerifyPub(pk, chal, proof)
@@ -88,11 +85,9 @@ func TestVerifyPubTamperedMu(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 15, 32)
 
-	tags, _ := ps.TagFile(file)
+	tags, _ := ps.TagFile(blocks.NewMemStore(file))
 	chal, _ := ps.MakeChallenge(len(file))
-	proof, _ := ps.RespondFetch(tags, chal, func(i int) ([]byte, error) {
-		return file[i], nil
-	})
+	proof, _ := ps.RespondFetch(tags, chal, blocks.NewMemStore(file))
 
 	proof.Mu[0].Add(proof.Mu[0], big.NewInt(1))
 	proof.Mu[0].Mod(proof.Mu[0], bn256.Order)
@@ -112,11 +107,9 @@ func TestVerifyPubTamperedSigma(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 15, 32)
 
-	tags, _ := ps.TagFile(file)
+	tags, _ := ps.TagFile(blocks.NewMemStore(file))
 	chal, _ := ps.MakeChallenge(len(file))
-	proof, _ := ps.RespondFetch(tags, chal, func(i int) ([]byte, error) {
-		return file[i], nil
-	})
+	proof, _ := ps.RespondFetch(tags, chal, blocks.NewMemStore(file))
 
 	// Flip a byte in sigma — the result is (almost certainly) an invalid G₁
 	// point, so Unmarshal will error. Verify must not accept it.
@@ -135,18 +128,18 @@ func TestVerifyPubTamperedSigma(t *testing.T) {
 func TestPubTamperedBlockFails(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 20, 32)
-	tags, _ := ps.TagFile(file)
-
-	corruptFetch := func(_ int) ([]byte, error) {
-		garbage := make([]byte, 32)
-		rand.Read(garbage)
-		return garbage, nil
-	}
+	tags, _ := ps.TagFile(blocks.NewMemStore(file))
 
 	anyFailed := false
 	for range 10 {
+		corruptBlocks := make([][]byte, len(file))
+		for i := range corruptBlocks {
+			g := make([]byte, 32)
+			rand.Read(g)
+			corruptBlocks[i] = g
+		}
 		chal, _ := ps.MakeChallenge(len(file))
-		proof, err := ps.RespondFetch(tags, chal, corruptFetch)
+		proof, err := ps.RespondFetch(tags, chal, blocks.NewMemStore(corruptBlocks))
 		if err != nil {
 			t.Fatalf("RespondFetch: %v", err)
 		}
@@ -170,8 +163,9 @@ func TestPubTamperedBlockFails(t *testing.T) {
 func runScheme(t *testing.T, scheme Scheme, nBlocks, blockSize, nRounds int) {
 	t.Helper()
 	file := randomFile(t, nBlocks, blockSize)
+	store := blocks.NewMemStore(file)
 
-	tags, err := scheme.TagFile(file)
+	tags, err := scheme.TagFile(store)
 	if err != nil {
 		t.Fatalf("TagFile: %v", err)
 	}
@@ -181,9 +175,7 @@ func runScheme(t *testing.T, scheme Scheme, nBlocks, blockSize, nRounds int) {
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
-		proof, err := scheme.RespondFetch(tags, chal, func(i int) ([]byte, error) {
-			return file[i], nil
-		})
+		proof, err := scheme.RespondFetch(tags, chal, store)
 		if err != nil {
 			t.Fatalf("RespondFetch(round=%d): %v", round, err)
 		}
@@ -238,7 +230,7 @@ func TestPubSmallFile(t *testing.T) {
 	}
 
 	file := randomFile(t, 3, 32)
-	tags, _ := ps.TagFile(file)
+	tags, _ := ps.TagFile(blocks.NewMemStore(file))
 
 	chal, err := ps.MakeChallenge(len(file))
 	if err != nil {
@@ -248,9 +240,7 @@ func TestPubSmallFile(t *testing.T) {
 		t.Fatalf("expected 3 challenge indices (clamped to n), got %d", len(chal.Indices))
 	}
 
-	proof, err := ps.RespondFetch(tags, chal, func(i int) ([]byte, error) {
-		return file[i], nil
-	})
+	proof, err := ps.RespondFetch(tags, chal, blocks.NewMemStore(file))
 	if err != nil {
 		t.Fatal(err)
 	}

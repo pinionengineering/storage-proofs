@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
 
@@ -47,7 +48,10 @@ func TestSWChallengeGame(t *testing.T) {
 	}
 
 	file := randomFile(t, 50, 32)
-	tags := TagFile(suite.SuiteV1, sk, file)
+	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(tags) != len(file) {
 		t.Fatalf("TagFile returned %d tags, want %d", len(tags), len(file))
@@ -59,7 +63,7 @@ func TestSWChallengeGame(t *testing.T) {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
 
-		proof, err := Respond(params, file, tags, chal)
+		proof, err := Respond(params, blocks.NewMemStore(file), tags, chal)
 		if err != nil {
 			t.Fatalf("Respond(round=%d): %v", round, err)
 		}
@@ -85,19 +89,21 @@ func TestSWTamperedBlockFails(t *testing.T) {
 	}
 
 	file := randomFile(t, 30, 32)
-	tags := TagFile(suite.SuiteV1, sk, file)
-
-	// Corrupt fetch: always return fresh random data.
-	corruptFetch := func(_ int) ([]byte, error) {
-		garbage := make([]byte, 32)
-		rand.Read(garbage)
-		return garbage, nil
+	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	anyFailed := false
 	for range 20 {
+		corruptBlocks := make([][]byte, len(file))
+		for i := range corruptBlocks {
+			g := make([]byte, 32)
+			rand.Read(g)
+			corruptBlocks[i] = g
+		}
 		chal, _ := MakeChallenge(len(file), params)
-		proof, err := RespondFetch(params, tags, chal, corruptFetch)
+		proof, err := RespondFetch(params, tags, chal, blocks.NewMemStore(corruptBlocks))
 		if err != nil {
 			t.Fatalf("RespondFetch: %v", err)
 		}
@@ -126,14 +132,17 @@ func TestSWUnlimitedChallenges(t *testing.T) {
 	}
 
 	file := randomFile(t, 20, 32)
-	tags := TagFile(suite.SuiteV1, sk, file)
+	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for round := range 100 {
 		chal, err := MakeChallenge(len(file), params)
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
-		proof, err := Respond(params, file, tags, chal)
+		proof, err := Respond(params, blocks.NewMemStore(file), tags, chal)
 		if err != nil {
 			t.Fatalf("Respond(round=%d): %v", round, err)
 		}
@@ -158,21 +167,22 @@ func TestSWRespondFetchEquivalent(t *testing.T) {
 	}
 
 	file := randomFile(t, 15, 32)
-	tags := TagFile(suite.SuiteV1, sk, file)
+	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	chal, err := MakeChallenge(len(file), params)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	p1, err := Respond(params, file, tags, chal)
+	p1, err := Respond(params, blocks.NewMemStore(file), tags, chal)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	p2, err := RespondFetch(params, tags, chal, func(idx int) ([]byte, error) {
-		return file[idx], nil
-	})
+	p2, err := RespondFetch(params, tags, chal, blocks.NewMemStore(file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +212,10 @@ func TestSWSmallFile(t *testing.T) {
 	}
 
 	file := randomFile(t, 3, 32) // only 3 blocks
-	tags := TagFile(suite.SuiteV1, sk, file)
+	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	chal, err := MakeChallenge(len(file), params)
 	if err != nil {
@@ -212,7 +225,7 @@ func TestSWSmallFile(t *testing.T) {
 		t.Fatalf("expected 3 indices (clamped to n), got %d", len(chal.Indices))
 	}
 
-	proof, err := Respond(params, file, tags, chal)
+	proof, err := Respond(params, blocks.NewMemStore(file), tags, chal)
 	if err != nil {
 		t.Fatal(err)
 	}

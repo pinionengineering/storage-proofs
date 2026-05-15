@@ -110,6 +110,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
 
@@ -785,8 +786,17 @@ func KeyGen(params *Params) (*MasterKey, error) {
 //
 // §4.2.1 encode: applies SA-ECC, precomputes Q_j = Enc(k_j^e, M_j) for each
 // j ∈ [1,Q], and appends MAC_KMACFile(F̃).
-func Encode(s *suite.Suite, mk *MasterKey, file [][]byte) (*EncodedFile, error) {
+func Encode(s *suite.Suite, mk *MasterKey, store blocks.BlockStore) (*EncodedFile, error) {
 	p := mk.Params
+	n := store.Len()
+	file := make([][]byte, n)
+	for i := range n {
+		b, err := store.Block(i)
+		if err != nil {
+			return nil, fmt.Errorf("por.Encode: block %d: %w", i, err)
+		}
+		file[i] = b
+	}
 
 	encoded, err := saeccEncode(s, file, p.OuterN, p.OuterK, mk.KPerm, mk.KECCPerm, mk.KECCEnc)
 	if err != nil {
@@ -841,7 +851,7 @@ func MakeChallenge(mk *MasterKey, j int) (*Challenge, error) {
 }
 
 // RespondFetch is the core server-side response function. It derives v block
-// indices from chal.Kjc, calls fetch(idx) for each challenged index to obtain
+// indices from chal.Kjc, calls store.Block(idx) for each challenged index to obtain
 // the raw block bytes, and computes the inner code linear combination:
 //
 //	M_j = Σ_{s=1}^v F̃_{i_s} · G[s][u]  mod P
@@ -849,12 +859,12 @@ func MakeChallenge(mk *MasterKey, j int) (*Challenge, error) {
 // where F̃_{i_s} = SetBytes(block_{i_s}) mod P. It returns a Response
 // containing M_j (fixed-length big-endian) and the sentinel sentinels[j-1].
 //
-// totalBlocks is the total number of encoded blocks (used to size the PRP).
-// fetch is called only for the v challenged indices — not all totalBlocks.
+// store.Len() is used to size the PRP; store.Block is called only for the v
+// challenged indices — not all blocks.
 //
 // §4.2.1 respond: "the server derives i_1,...,i_v from k_j^c, computes M_j,
 // and returns M_j and Q_j".
-func RespondFetch(s *suite.Suite, p *Params, totalBlocks int, sentinels [][]byte, chal *Challenge, fetch func(idx int) ([]byte, error)) (*Response, error) {
+func RespondFetch(s *suite.Suite, p *Params, sentinels [][]byte, chal *Challenge, store blocks.BlockStore) (*Response, error) {
 	if chal.J < 1 || chal.J > p.Q {
 		return nil, fmt.Errorf("por.RespondFetch: j=%d out of range [1, %d]", chal.J, p.Q)
 	}
@@ -862,12 +872,12 @@ func RespondFetch(s *suite.Suite, p *Params, totalBlocks int, sentinels [][]byte
 		return nil, fmt.Errorf("por.RespondFetch: u=%d out of range [1, %d]", chal.U, p.W)
 	}
 
-	indices := blockIndices(s, chal.Kjc, p.V, totalBlocks)
+	indices := blockIndices(s, chal.Kjc, p.V, store.Len())
 
 	P := p.P
 	M := big.NewInt(0)
 	for pos, idx := range indices {
-		data, err := fetch(idx)
+		data, err := store.Block(idx)
 		if err != nil {
 			return nil, fmt.Errorf("por.RespondFetch: block %d: %w", idx, err)
 		}
@@ -894,9 +904,7 @@ func RespondFetch(s *suite.Suite, p *Params, totalBlocks int, sentinels [][]byte
 // §4.2.1 respond: "the server derives i_1,...,i_v from k_j^c, computes M_j,
 // and returns M_j and Q_j".
 func Respond(s *suite.Suite, ef *EncodedFile, chal *Challenge) (*Response, error) {
-	return RespondFetch(s, ef.Params, len(ef.Blocks), ef.Sentinels, chal, func(idx int) ([]byte, error) {
-		return ef.Blocks[idx], nil
-	})
+	return RespondFetch(s, ef.Params, ef.Sentinels, chal, blocks.NewMemStore(ef.Blocks))
 }
 
 // Verify checks whether the server's response to challenge c is correct.

@@ -75,6 +75,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/pdp"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
@@ -258,20 +259,20 @@ func TagBlock(s *suite.Suite, pk *pdp.PublicKey, sk *SecretKey, m []byte, w []by
 //     (Fig. 2, GenProof step 3; SHA-256 of the block is the deviation noted above.)
 //  4. Return V = (T, ρ). (Fig. 2, GenProof step 4)
 //
-// blocks and tags must be the same length and chal.C must be in [1, len(blocks)].
-func GenProof(s *suite.Suite, pk *pdp.PublicKey, blocks [][]byte, chal *Challenge, tags []*Tag) (*Proof, error) {
+// store and tags must have the same length and chal.C must be in [1, store.Len()].
+func GenProof(s *suite.Suite, pk *pdp.PublicKey, store blocks.BlockStore, chal *Challenge, tags []*Tag) (*Proof, error) {
 	if chal.SuiteID != s.ID() {
 		return nil, fmt.Errorf("challenge suite %d does not match suite %d", chal.SuiteID, s.ID())
 	}
-	if len(blocks) != len(tags) {
-		return nil, fmt.Errorf("blocks and tags length mismatch: %d vs %d", len(blocks), len(tags))
+	if store.Len() != len(tags) {
+		return nil, fmt.Errorf("blocks and tags length mismatch: %d vs %d", store.Len(), len(tags))
 	}
-	if chal.C < 1 || chal.C > len(blocks) {
-		return nil, fmt.Errorf("challenge C=%d out of range [1, %d]", chal.C, len(blocks))
+	if chal.C < 1 || chal.C > store.Len() {
+		return nil, fmt.Errorf("challenge C=%d out of range [1, %d]", chal.C, store.Len())
 	}
 
 	// §4.3 Fig. 2, GenProof step 1: i_j = π_{k1}(j).
-	perm := s.BuildPRP(chal.K1, len(blocks))
+	perm := s.BuildPRP(chal.K1, store.Len())
 
 	T := big.NewInt(1)
 	mu := big.NewInt(0)
@@ -292,7 +293,11 @@ func GenProof(s *suite.Suite, pk *pdp.PublicKey, blocks [][]byte, chal *Challeng
 		T.Mod(T, pk.N)
 
 		// §4.3 Fig. 2, GenProof step 3: accumulate μ = Σ a_j · m_{i_j}.
-		mu.Add(mu, new(big.Int).Mul(aj, s.HashBlock(blocks[ij])))
+		block, err := store.Block(ij)
+		if err != nil {
+			return nil, fmt.Errorf("ateniese.GenProof: block %d: %w", ij, err)
+		}
+		mu.Add(mu, new(big.Int).Mul(aj, s.HashBlock(block)))
 	}
 
 	// §4.3 Fig. 2, GenProof step 3: ρ = SHA-256(g_s^μ mod N).

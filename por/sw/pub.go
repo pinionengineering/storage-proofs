@@ -47,6 +47,7 @@ import (
 	"math/big"
 
 	"github.com/cloudflare/bn256"
+	"github.com/pinionengineering/storage-proofs/blocks"
 )
 
 // PubPublicKey is the public key for the §3.3 BLS-based scheme.
@@ -142,9 +143,14 @@ func pubSectorElem(block []byte, j, s int) *big.Int {
 
 // TagFile computes σ_i = α·(H(Name‖i) + Σ_j f_{i,j}·u_j) ∈ G₁ for each block.
 // Each tag is marshalled as 64 bytes (uncompressed G₁ point).
-func (ps *PubScheme) TagFile(file [][]byte) ([][]byte, error) {
-	out := make([][]byte, len(file))
-	for i, block := range file {
+func (ps *PubScheme) TagFile(store blocks.BlockStore) ([][]byte, error) {
+	n := store.Len()
+	out := make([][]byte, n)
+	for i := range n {
+		block, err := store.Block(i)
+		if err != nil {
+			return nil, fmt.Errorf("sw.PubScheme.TagFile: block %d: %w", i, err)
+		}
 		// acc = H(Name‖i) + Σ_j f_{i,j}·u_j  (additive G₁ notation)
 		acc := blockHashG1(ps.pk.Name, i)
 		for j := range ps.s {
@@ -201,7 +207,7 @@ func (ps *PubScheme) MakeChallenge(n int) (*SWChallenge, error) {
 //
 //	σ   = Σ_t ν_t · σ_{i_t}           ∈ G₁
 //	μ_j = Σ_t ν_t · f_{i_t,j} mod q   ∈ Z_q
-func (ps *PubScheme) RespondFetch(tags [][]byte, chal *SWChallenge, fetch func(int) ([]byte, error)) (*SWProof, error) {
+func (ps *PubScheme) RespondFetch(tags [][]byte, chal *SWChallenge, store blocks.BlockStore) (*SWProof, error) {
 	if len(chal.Indices) == 0 {
 		return nil, fmt.Errorf("sw.PubScheme.RespondFetch: empty challenge")
 	}
@@ -230,9 +236,9 @@ func (ps *PubScheme) RespondFetch(tags [][]byte, chal *SWChallenge, fetch func(i
 			sigmaAcc = new(bn256.G1).Add(sigmaAcc, term)
 		}
 
-		data, err := fetch(idx)
+		data, err := store.Block(idx)
 		if err != nil {
-			return nil, fmt.Errorf("sw.PubScheme.RespondFetch: fetch(%d): %w", idx, err)
+			return nil, fmt.Errorf("sw.PubScheme.RespondFetch: block(%d): %w", idx, err)
 		}
 		for j := range ps.s {
 			fij := pubSectorElem(data, j, ps.s)

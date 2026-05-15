@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/pinionengineering/storage-proofs/blocks"
 	suitemod "github.com/pinionengineering/storage-proofs/suite"
 )
 
@@ -27,8 +28,11 @@ func NewPrivScheme(s *suitemod.Suite, params *Params) (*PrivScheme, error) {
 func (ps *PrivScheme) Kind() SchemeKind { return PrivKind }
 
 // TagFile serializes each tag as big-endian Z_P bytes.
-func (ps *PrivScheme) TagFile(file [][]byte) ([][]byte, error) {
-	tags := TagFile(ps.suite, ps.sk, file)
+func (ps *PrivScheme) TagFile(store blocks.BlockStore) ([][]byte, error) {
+	tags, err := TagFile(ps.suite, ps.sk, store)
+	if err != nil {
+		return nil, err
+	}
 	out := make([][]byte, len(tags))
 	for i, t := range tags {
 		out[i] = t.Sigma.Bytes()
@@ -46,13 +50,13 @@ func (ps *PrivScheme) MakeChallenge(n int) (*SWChallenge, error) {
 }
 
 // RespondFetch deserializes the tags, computes the proof, and re-serializes sigma.
-func (ps *PrivScheme) RespondFetch(tags [][]byte, chal *SWChallenge, fetch func(int) ([]byte, error)) (*SWProof, error) {
+func (ps *PrivScheme) RespondFetch(tags [][]byte, chal *SWChallenge, store blocks.BlockStore) (*SWProof, error) {
 	privTags := make([]*Tag, len(tags))
 	for i, b := range tags {
 		privTags[i] = &Tag{Sigma: new(big.Int).SetBytes(b)}
 	}
 	c := &Challenge{Indices: chal.Indices, Coeffs: chal.Coeffs}
-	p, err := RespondFetch(ps.sk.Params, privTags, c, fetch)
+	p, err := RespondFetch(ps.sk.Params, privTags, c, store)
 	if err != nil {
 		return nil, err
 	}

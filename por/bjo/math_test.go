@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"testing"
 
+	blockstore "github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
 
@@ -644,7 +645,7 @@ func TestFullProtocolSmallParams(t *testing.T) {
 	}
 
 	blocks := randomBlocks(t, 8, 32)
-	ef, err := Encode(suite.SuiteV1, mk, blocks)
+	ef, err := Encode(suite.SuiteV1, mk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
@@ -685,7 +686,7 @@ func TestTamperedBlockFails(t *testing.T) {
 	}
 
 	blocks := randomBlocks(t, 8, 32)
-	ef, err := Encode(suite.SuiteV1, mk, blocks)
+	ef, err := Encode(suite.SuiteV1, mk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}

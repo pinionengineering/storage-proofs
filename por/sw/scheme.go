@@ -1,6 +1,10 @@
 package sw
 
-import "math/big"
+import (
+	"math/big"
+
+	"github.com/pinionengineering/storage-proofs/blocks"
+)
 
 // SchemeKind identifies which SW verification variant a challenge or proof belongs to.
 type SchemeKind uint8
@@ -39,15 +43,15 @@ type Scheme interface {
 	// TagFile computes one serialized tag per block. The client uploads
 	// (file, tags) to the server and retains only the key material embedded
 	// in the Scheme instance.
-	TagFile(file [][]byte) ([][]byte, error)
+	TagFile(store blocks.BlockStore) ([][]byte, error)
 
 	// MakeChallenge returns a fresh random challenge for a file of n blocks.
 	// For PubKind, any holder of the public key can call this.
 	MakeChallenge(n int) (*SWChallenge, error)
 
 	// RespondFetch computes a proof by fetching the challenged blocks on demand.
-	// Called by the server; requires only the serialized tags and a fetch callback.
-	RespondFetch(tags [][]byte, chal *SWChallenge, fetch func(int) ([]byte, error)) (*SWProof, error)
+	// Called by the server; requires only the serialized tags and a block store.
+	RespondFetch(tags [][]byte, chal *SWChallenge, store blocks.BlockStore) (*SWProof, error)
 
 	// Verify checks the server's proof against a challenge.
 	// For PrivKind the embedded secret key is used; for PubKind only the

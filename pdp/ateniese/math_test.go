@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"testing"
 
+	blockstore "github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/pdp"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
@@ -494,7 +495,7 @@ func TestFullProtocolSmallKeys(t *testing.T) {
 		Gs:      Gs,
 	}
 
-	proof, err := GenProof(suite.SuiteV1, pk, blocks, chal, tags)
+	proof, err := GenProof(suite.SuiteV1, pk, blockstore.NewMemStore(blocks), chal, tags)
 	if err != nil {
 		t.Fatalf("GenProof: %v", err)
 	}
@@ -550,7 +551,7 @@ func TestTamperedBlockFails(t *testing.T) {
 		blocks[i] = tampered
 	}
 
-	proof, err := GenProof(suite.SuiteV1, pk, blocks, chal, tags)
+	proof, err := GenProof(suite.SuiteV1, pk, blockstore.NewMemStore(blocks), chal, tags)
 	if err != nil {
 		t.Fatalf("GenProof: %v", err)
 	}

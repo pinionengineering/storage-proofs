@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"testing"
 
+	blockstore "github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/pdp"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
@@ -33,7 +34,7 @@ func randomBlocks(t *testing.T, n, size int) [][]byte {
 func TestBuildAndBasis(t *testing.T) {
 	pk := makeKey(t)
 	blocks := randomBlocks(t, 10, 32)
-	sl, basis, err := Build(suite.SuiteV1, pk, blocks)
+	sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -56,7 +57,7 @@ func TestBuildAndBasis(t *testing.T) {
 func TestAtRankVerifyPath(t *testing.T) {
 	pk := makeKey(t)
 	blocks := randomBlocks(t, 15, 32)
-	sl, basis, err := Build(suite.SuiteV1, pk, blocks)
+	sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -81,19 +82,17 @@ func TestAtRankVerifyPath(t *testing.T) {
 func TestProveAndVerify(t *testing.T) {
 	pk := makeKey(t)
 	blocks := randomBlocks(t, 20, 32)
-	sl, basis, err := Build(suite.SuiteV1, pk, blocks)
+	sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-
-	fetch := func(i int) ([]byte, error) { return blocks[i-1], nil }
 
 	for round := range 5 {
 		chal, err := MakeChallenge(sl.n, 4)
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
-		proof, err := Prove(suite.SuiteV1, pk, sl, chal, fetch)
+		proof, err := Prove(suite.SuiteV1, pk, sl, chal, blockstore.NewMemStore(blocks))
 		if err != nil {
 			t.Fatalf("Prove(round=%d): %v", round, err)
 		}
@@ -111,22 +110,21 @@ func TestProveAndVerify(t *testing.T) {
 func TestTamperedBlockFails(t *testing.T) {
 	pk := makeKey(t)
 	blocks := randomBlocks(t, 20, 32)
-	sl, basis, err := Build(suite.SuiteV1, pk, blocks)
+	sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 
-	// Serve garbage for every block.
-	corruptFetch := func(_ int) ([]byte, error) {
-		g := make([]byte, 32)
-		rand.Read(g)
-		return g, nil
-	}
-
 	anyFailed := false
 	for range 10 {
+		corruptBlocks := make([][]byte, sl.n)
+		for i := range corruptBlocks {
+			g := make([]byte, 32)
+			rand.Read(g)
+			corruptBlocks[i] = g
+		}
 		chal, _ := MakeChallenge(sl.n, 4)
-		proof, err := Prove(suite.SuiteV1, pk, sl, chal, corruptFetch)
+		proof, err := Prove(suite.SuiteV1, pk, sl, chal, blockstore.NewMemStore(corruptBlocks))
 		if err != nil {
 			t.Fatalf("Prove with corrupt fetch: %v", err)
 		}
@@ -147,7 +145,7 @@ func TestTamperedBlockFails(t *testing.T) {
 func TestModifyUpdate(t *testing.T) {
 	pk := makeKey(t)
 	blocks := randomBlocks(t, 10, 32)
-	sl, basis, err := Build(suite.SuiteV1, pk, blocks)
+	sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -177,9 +175,8 @@ func TestModifyUpdate(t *testing.T) {
 
 	// Subsequent challenges against the updated skip list should pass.
 	blocks[4] = newData
-	fetch := func(i int) ([]byte, error) { return blocks[i-1], nil }
 	chal, _ := MakeChallenge(sl.n, 4)
-	proof, err := Prove(suite.SuiteV1, pk, sl, chal, fetch)
+	proof, err := Prove(suite.SuiteV1, pk, sl, chal, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatalf("Prove after Modify: %v", err)
 	}
@@ -196,7 +193,7 @@ func TestModifyUpdate(t *testing.T) {
 func TestInsertUpdate(t *testing.T) {
 	pk := makeKey(t)
 	blocks := randomBlocks(t, 10, 32)
-	sl, basis, err := Build(suite.SuiteV1, pk, blocks)
+	sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -236,7 +233,7 @@ func TestDeleteUpdate(t *testing.T) {
 
 	for _, idx := range []int{1, 5, 10} {
 		blocks := randomBlocks(t, 10, 32)
-		sl, basis, err := Build(suite.SuiteV1, pk, blocks)
+		sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
 		if err != nil {
 			t.Fatalf("idx=%d Build: %v", idx, err)
 		}
@@ -265,17 +262,14 @@ func TestDeleteUpdate(t *testing.T) {
 		}
 
 		// Proofs against the new basis should still work.
-		fetch := func(i int) ([]byte, error) {
-			remaining := make([][]byte, 0, len(blocks)-1)
-			for j, b := range blocks {
-				if j+1 != idx {
-					remaining = append(remaining, b)
-				}
+		remaining := make([][]byte, 0, len(blocks)-1)
+		for j, b := range blocks {
+			if j+1 != idx {
+				remaining = append(remaining, b)
 			}
-			return remaining[i-1], nil
 		}
 		chal, _ := MakeChallenge(sl.n, 3)
-		proof, err := Prove(suite.SuiteV1, pk, sl, chal, fetch)
+		proof, err := Prove(suite.SuiteV1, pk, sl, chal, blockstore.NewMemStore(remaining))
 		if err != nil {
 			t.Fatalf("idx=%d Prove after Delete: %v", idx, err)
 		}
