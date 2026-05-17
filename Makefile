@@ -14,7 +14,7 @@ study: $(shell find cmd/study por pdp line blocks suite -name '*.go') cmd/study/
 	go build -o study ./cmd/study
 	./study
 	mkdir -p $(DOCS)
-	cp study.html $(DOCS)/study.html
+	cp study.html $(DOCS)/index.html
 
 docs: study
 
