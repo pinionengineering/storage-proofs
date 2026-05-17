@@ -4,10 +4,10 @@
 // Usage:
 //
 //	go run ./cmd/linedemo/client -file /path/to/data [flags]
-//	  -protocol      ateniese|erway|sw|bjo (default ateniese)
+//	  -protocol      ateniese|erway|sw|bjo|swpub (default ateniese)
 //	  -server        server base URL (default http://localhost:8765)
 //	  -rounds        audit rounds to run (default 10)
-//	  -challenged    blocks challenged per round (default 10; ignored for bjo/sw)
+//	  -challenged    blocks challenged per round (default 10; ignored for bjo/sw/swpub)
 package main
 
 import (
@@ -28,6 +28,7 @@ import (
 	lineBJO "github.com/pinionengineering/storage-proofs/line/bjo"
 	lineErway "github.com/pinionengineering/storage-proofs/line/erway"
 	lineSW "github.com/pinionengineering/storage-proofs/line/sw"
+	lineSwPub "github.com/pinionengineering/storage-proofs/line/swpub"
 	ateniese "github.com/pinionengineering/storage-proofs/pdp/ateniese"
 	erway "github.com/pinionengineering/storage-proofs/pdp/erway"
 	porbjo "github.com/pinionengineering/storage-proofs/por/bjo"
@@ -47,6 +48,7 @@ var challengerFactories = map[string]line.ChallengerFactory{
 	"erway":    lineErway.NewChallengerFactory(),
 	"sw":       lineSW.NewChallengerFactory(),
 	"bjo":      lineBJO.NewChallengerFactory(),
+	"swpub":    lineSwPub.NewChallengerFactory(),
 }
 
 // setupTagger is what we need from the tagger after TagBlocks.
@@ -60,7 +62,7 @@ func main() {
 	protocol := flag.String("protocol", "ateniese", "ateniese|erway|sw|bjo")
 	server := flag.String("server", "http://localhost:8765", "server base URL")
 	rounds := flag.Int("rounds", 10, "audit rounds")
-	challenged := flag.Int("challenged", 10, "blocks per challenge (ignored for bjo/sw)")
+	challenged := flag.Int("challenged", 10, "blocks per challenge (ignored for bjo)")
 	flag.Parse()
 
 	if *filePath == "" {
@@ -112,6 +114,14 @@ func main() {
 		})
 		must(err)
 		tagger = lineBJO.NewTagger(mk, s)
+		_, err = tagger.TagBlocks(store)
+		must(err)
+
+	case "swpub":
+		kind = "POR"
+		ps, err := porsw.NewPubScheme(4, *challenged)
+		must(err)
+		tagger = lineSwPub.NewTagger(ps)
 		_, err = tagger.TagBlocks(store)
 		must(err)
 

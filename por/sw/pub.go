@@ -109,6 +109,16 @@ func NewPubScheme(s, l int) (*PubScheme, error) {
 func (ps *PubScheme) PubKey() *PubPublicKey { return ps.pk }
 
 func (ps *PubScheme) Kind() SchemeKind { return PubKind }
+func (ps *PubScheme) S() int           { return ps.s }
+func (ps *PubScheme) L() int           { return ps.l }
+
+// NewPubSchemeFromKey reconstructs a PubScheme from existing key material
+// without generating a new keypair. Used by protocol adapters that rebuild
+// scheme state from wire setup payloads. pk may be nil if only s and l are
+// needed (e.g. for RespondFetch, which does not use the public key).
+func NewPubSchemeFromKey(pk *PubPublicKey, s, l int) *PubScheme {
+	return &PubScheme{pk: pk, s: s, l: l}
+}
 
 // pubHashG1 returns H(data) = SHA-256(data) mod q · G₁ ∈ G₁.
 func pubHashG1(data []byte) *bn256.G1 {

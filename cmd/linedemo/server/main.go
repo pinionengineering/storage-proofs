@@ -21,6 +21,7 @@ import (
 	lineBJO "github.com/pinionengineering/storage-proofs/line/bjo"
 	lineErway "github.com/pinionengineering/storage-proofs/line/erway"
 	lineSW "github.com/pinionengineering/storage-proofs/line/sw"
+	lineSwPub "github.com/pinionengineering/storage-proofs/line/swpub"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
 
@@ -35,6 +36,7 @@ var proverFactories = map[string]line.ProverFactory{
 	"erway":    lineErway.NewProverFactory(suite.SuiteV1),
 	"sw":       lineSW.NewProverFactory(),
 	"bjo":      lineBJO.NewProverFactory(suite.SuiteV1),
+	"swpub":    lineSwPub.NewProverFactory(),
 }
 
 type srv struct {
