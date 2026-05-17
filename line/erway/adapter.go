@@ -155,6 +155,7 @@ type wireSetup struct {
 	Protocol string   `json:"protocol"`
 	PKN      *big.Int `json:"pk_n"`
 	PKG      *big.Int `json:"pk_g"`
+	Heights  []int    `json:"heights"` // per-block tower heights, sent per §3.4 of the paper
 }
 
 type wireClientSetup struct {
@@ -166,7 +167,7 @@ type wireClientSetup struct {
 }
 
 func (t *Tagger) ProverSetup() ([]byte, error) {
-	return json.Marshal(wireSetup{Protocol: "erway", PKN: t.pk.N, PKG: t.pk.G})
+	return json.Marshal(wireSetup{Protocol: "erway", PKN: t.pk.N, PKG: t.pk.G, Heights: t.sl.Heights()})
 }
 
 func (t *Tagger) ClientSetup() ([]byte, error) {
@@ -220,7 +221,11 @@ func (f proverFactory) NewProver(setup []byte, store blocks.BlockStore) (line.Pr
 		return nil, fmt.Errorf("erway.NewProver: %w", err)
 	}
 	pk := &pdp.PublicKey{N: ws.PKN, G: ws.PKG}
-	return NewProverFromBlocks(f.s, pk, store)
+	sl, _, err := pdperway.BuildWithHeights(f.s, pk, store, ws.Heights)
+	if err != nil {
+		return nil, fmt.Errorf("erway.NewProver: %w", err)
+	}
+	return &Prover{pk: pk, sl: sl}, nil
 }
 
 // ---------------------------------------------------------------------------

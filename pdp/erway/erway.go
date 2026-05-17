@@ -161,8 +161,19 @@ func (v *slNode) recomputeLabel() {
 // levels[i] is the leftmost (sentinel) node at level i.
 // The skip list always has at least 1 level (levels[0]).
 type SkipList struct {
-	levels []*slNode // levels[i] = leftmost node at level i
-	n      int       // count of data blocks
+	levels  []*slNode // levels[i] = leftmost node at level i
+	n       int       // count of data blocks
+	heights []int     // per-block tower height chosen at insertion time
+}
+
+// Heights returns the tower height chosen for each block at insertion time,
+// in block order. The paper (§3.4) specifies that the client chooses heights
+// and sends them to the server as part of the insertion parameters; Heights
+// provides the values needed to reconstruct an identical skip list via BuildWithHeights.
+func (sl *SkipList) Heights() []int {
+	out := make([]int, len(sl.heights))
+	copy(out, sl.heights)
+	return out
 }
 
 // Basis is the O(1) client metadata: the 32-byte root label.
@@ -242,9 +253,48 @@ func (sl *SkipList) maxHeight() int {
 	return h
 }
 
-// appendBlock inserts a new block at the end of the list (position n+1).
+// appendBlock inserts a new block at the end of the list (position n+1),
+// choosing its tower height by coin-flip and recording it.
 func (sl *SkipList) appendBlock(s *suite.Suite, pk *pdp.PublicKey, block []byte) error {
-	return sl.doInsert(s, pk, sl.n+1, block, coinHeight(sl.maxHeight()))
+	h := coinHeight(sl.maxHeight())
+	sl.heights = append(sl.heights, h)
+	return sl.doInsert(s, pk, sl.n+1, block, h)
+}
+
+// BuildWithHeights constructs a SkipList using caller-supplied tower heights
+// instead of drawing them at random. heights[i] is the tower height for block i.
+// This lets the server-side prover reproduce the exact structure the client built,
+// as required by the paper (§3.4): "the parameters [of an insertion] include the tower height."
+func BuildWithHeights(s *suite.Suite, pk *pdp.PublicKey, store blocks.BlockStore, heights []int) (*SkipList, Basis, error) {
+	n := store.Len()
+	if n == 0 {
+		return nil, nil, fmt.Errorf("erway.BuildWithHeights: blocks must not be empty")
+	}
+	if len(heights) != n {
+		return nil, nil, fmt.Errorf("erway.BuildWithHeights: need %d heights, got %d", n, len(heights))
+	}
+
+	rightSent := &slNode{level: 0, isSentinel: true}
+	leftSent := &slNode{level: 0, isSentinel: true, right: rightSent}
+	rightSent.label = make([]byte, 32)
+	leftSent.label = make([]byte, 32)
+
+	sl := &SkipList{levels: []*slNode{leftSent}, heights: make([]int, n)}
+	copy(sl.heights, heights)
+
+	for i := range n {
+		b, err := store.Block(i)
+		if err != nil {
+			return nil, nil, fmt.Errorf("erway.BuildWithHeights: block %d: %w", i, err)
+		}
+		if err := sl.doInsert(s, pk, sl.n+1, b, heights[i]); err != nil {
+			return nil, nil, fmt.Errorf("erway.BuildWithHeights: block %d: %w", i, err)
+		}
+	}
+
+	basis := make(Basis, 32)
+	copy(basis, sl.rootLabel())
+	return sl, basis, nil
 }
 
 // doInsert inserts block at 1-indexed position pos with the given tower height h.
