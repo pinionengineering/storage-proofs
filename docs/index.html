@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Storage Proof Protocols</title>
+<style>
+  html { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; }
+  body { max-width: 800px; margin: 0 auto; padding: 3rem 1.5rem; }
+  h1 { font-size: 1.8rem; font-weight: 700; color: #f1f5f9; margin: 0 0 .5rem; }
+  p { color: #94a3b8; line-height: 1.6; margin: .75rem 0; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-top: 2rem; }
+  .card {
+    background: #1e293b; border: 1px solid #334155; border-radius: .75rem;
+    padding: 1.5rem; text-decoration: none; color: inherit;
+    transition: border-color .15s, background .15s;
+  }
+  .card:hover { border-color: #60a5fa; background: #1e3a5f; }
+  .card h2 { font-size: 1.1rem; font-weight: 600; color: #f1f5f9; margin: 0 0 .5rem; }
+  .card p { font-size: .875rem; color: #94a3b8; margin: 0; }
+  .tag {
+    display: inline-block; font-size: .7rem; font-weight: 600;
+    padding: .15rem .45rem; border-radius: .3rem; margin-bottom: .6rem;
+  }
+  .tag-bench { background: #1e40af; color: #bfdbfe; }
+  .tag-stat  { background: #14532d; color: #bbf7d0; }
+  footer { margin-top: 3rem; font-size: .8rem; color: #475569; }
+  a { color: #60a5fa; }
+</style>
+</head>
+<body>
+<h1>Storage Proof Protocols</h1>
+<p>
+  Benchmark and statistical analysis of remote storage proof schemes:
+  <strong>Ateniese PDP</strong>, <strong>Erway DPDP&nbsp;I</strong>,
+  <strong>Shacham–Waters POR</strong> (private and public key variants), and
+  <strong>Bowers–Juels–Oprea POR</strong>.
+</p>
+<p>
+  Source code and protocol implementations are on
+  <a href="https://github.com/pinionengineering/storage-proofs">GitHub</a>.
+</p>
+
+<div class="cards">
+  <a class="card" href="study.html">
+    <span class="tag tag-bench">Benchmarks + Statistics</span>
+    <h2>Protocol Study</h2>
+    <p>
+      Setup, prove, and verify latency with theoretical scaling curves.
+      Wire sizes, key-size sweep, detection probability — all schemes compared.
+    </p>
+  </a>
+</div>
+
+<footer>
+  Generated from <a href="https://github.com/pinionengineering/storage-proofs">pinionengineering/storage-proofs</a>.
+  Charts produced by <code>make docs</code>.
+</footer>
+</body>
+</html>

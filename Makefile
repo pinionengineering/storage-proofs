@@ -1,4 +1,6 @@
-.PHONY: all build test stats clean
+.PHONY: all build test study docs clean
+
+DOCS = docs
 
 all: build
 
@@ -8,25 +10,13 @@ build:
 test:
 	go test ./...
 
-storagecharts: $(shell find cmd/storagecharts por pdp -name '*.go')
-	go build -o storagecharts ./cmd/storagecharts
+study: $(shell find cmd/study por pdp line blocks suite -name '*.go') cmd/study/study.tmpl
+	go build -o study ./cmd/study
+	./study
+	mkdir -p $(DOCS)
+	cp study.html $(DOCS)/study.html
 
-storagestats: $(shell find cmd/storagestats por pdp -name '*.go')
-	go build -o storagestats ./cmd/storagestats
-
-proofbench: $(shell find cmd/proofbench por pdp -name '*.go')
-	go build -o proofbench ./cmd/proofbench
-
-storage_proof_charts.html: storagecharts
-	./storagecharts
-
-comparison.html: proofbench cmd/proofbench/comparison.html
-	./proofbench
-	cp cmd/proofbench/comparison.html comparison.html
-
-stats: storagestats
-	./storagestats
+docs: study
 
 clean:
-	rm -f storagecharts storagestats proofbench
-	rm -f storage_proof_charts.html comparison.html benchdata.json
+	rm -f study study.html
