@@ -1,9 +1,7 @@
-study
-client
-server
+/study
+/client
+/server
 
 # Intermediate build artifacts (final output goes to docs/)
+linedemo-store
 study.html
-benchdata.json
-comparison.html
-storage_proof_charts.html
