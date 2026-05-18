@@ -177,6 +177,17 @@ func (c *Challenger) Challenge(numBlocks int) (line.Challenge, line.Validator, e
 	return line.Challenge(b), v, nil
 }
 
+// ChalBytes returns the binary size of a challenge: fixed header fields plus
+// the byte length of the Gs group element.
+func (c *Challenger) ChalBytes(chal line.Challenge) int {
+	var wc wireChal
+	if err := json.Unmarshal(chal, &wc); err != nil {
+		return len(chal)
+	}
+	// N(4) + SuiteID(1) + C(4) + K1 + K2 + Gs
+	return 9 + len(wc.K1) + len(wc.K2) + len(wc.Gs.Bytes())
+}
+
 // ---------------------------------------------------------------------------
 // roundValidator (implements Validator for one ateniese round)
 // ---------------------------------------------------------------------------
@@ -326,6 +337,15 @@ func NewProver(pk *pdp.PublicKey, tags []line.Tag) (*Prover, error) {
 		decoded[i] = tag
 	}
 	return &Prover{pk: pk, tags: decoded}, nil
+}
+
+// ProofBytes returns the binary size of a proof: byte length of T plus Rho.
+func (p *Prover) ProofBytes(proof line.Proof) int {
+	var wp wireProof
+	if err := json.Unmarshal(proof, &wp); err != nil {
+		return len(proof)
+	}
+	return len(wp.T.Bytes()) + len(wp.Rho)
 }
 
 // Prove implements line.Prover.

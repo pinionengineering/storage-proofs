@@ -177,6 +177,19 @@ type Challenger struct {
 	l  int
 }
 
+// ChalBytes returns the binary size of a challenge: C*(index+32-byte coeff).
+func (ch *Challenger) ChalBytes(chal line.Challenge) int {
+	var wc wireChal
+	if err := json.Unmarshal(chal, &wc); err != nil {
+		return len(chal)
+	}
+	n := 4 * len(wc.Indices)
+	for _, c := range wc.Coeffs {
+		n += len(c)
+	}
+	return n
+}
+
 func (ch *Challenger) Challenge(numBlocks int) (line.Challenge, line.Validator, error) {
 	// MakeChallenge only reads ps.l; no keypair needed.
 	ps := porsw.NewPubSchemeFromKey(nil, ch.s, ch.l)
@@ -204,6 +217,20 @@ func (ch *Challenger) Challenge(numBlocks int) (line.Challenge, line.Validator, 
 type Prover struct {
 	s    int
 	tags [][]byte // n × 64-byte G1 marshals
+}
+
+// ProofBytes returns the binary size of a proof: 64-byte G1 sigma plus
+// 32-byte-per-element mu scalars.
+func (p *Prover) ProofBytes(proof line.Proof) int {
+	var wp wireProof
+	if err := json.Unmarshal(proof, &wp); err != nil {
+		return len(proof)
+	}
+	n := len(wp.Sigma)
+	for _, m := range wp.Mu {
+		n += len(m)
+	}
+	return n
 }
 
 func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof, error) {

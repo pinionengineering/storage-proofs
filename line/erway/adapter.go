@@ -271,6 +271,20 @@ func (ch *Challenger) Challenge(numBlocks int) (line.Challenge, line.Validator, 
 	return line.Challenge(b), NewValidator(ch.pk, ch.basis), nil
 }
 
+// ChalBytes returns the binary size of a challenge: header plus C*(index+coeff).
+func (ch *Challenger) ChalBytes(chal line.Challenge) int {
+	var wc wireChal
+	if err := json.Unmarshal(chal, &wc); err != nil {
+		return len(chal)
+	}
+	// SuiteID(1) + N(4) + C×index(4)
+	n := 5 + 4*len(wc.Indices)
+	for _, c := range wc.Coeffs {
+		n += len(c.Bytes())
+	}
+	return n
+}
+
 // ---------------------------------------------------------------------------
 // Prover
 // ---------------------------------------------------------------------------
@@ -295,6 +309,24 @@ func NewProverFromBlocks(s *suite.Suite, pk *pdp.PublicKey, store blocks.BlockSt
 		return nil, fmt.Errorf("erway.NewProverFromBlocks: %w", err)
 	}
 	return &Prover{pk: pk, sl: sl}, nil
+}
+
+// ProofBytes returns the binary size of a proof: per-block tag and path steps
+// plus the accumulated M value.
+func (p *Prover) ProofBytes(proof line.Proof) int {
+	pp, err := decodeProof(proof)
+	if err != nil {
+		return len(proof)
+	}
+	n := len(pp.M.Bytes())
+	for _, bp := range pp.Blocks {
+		n += len(bp.Tag)
+		for _, step := range bp.Steps {
+			// Level(4) + Rank(4) + Right(1) + SibLabel + Q(4)
+			n += 9 + len(step.SibLabel)
+		}
+	}
+	return n
 }
 
 // Prove implements line.Prover. store is 0-indexed; erway uses 1-indexed

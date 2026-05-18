@@ -215,6 +215,15 @@ func NewChallenger(mk *porbjo.MasterKey) *Challenger {
 	return c
 }
 
+// ChalBytes returns the binary size of a challenge: J(4) + Kjc + U(4).
+func (ch *Challenger) ChalBytes(chal line.Challenge) int {
+	var wc wireChal
+	if err := json.Unmarshal(chal, &wc); err != nil {
+		return len(chal)
+	}
+	return 4 + len(wc.Kjc) + 4
+}
+
 func (ch *Challenger) Challenge(_ int) (line.Challenge, line.Validator, error) {
 	j := int(ch.next.Add(1) - 1)
 	if j > ch.mk.Params.Q {
@@ -252,6 +261,15 @@ func NewProver(s *suite.Suite, ef *porbjo.EncodedFile) *Prover {
 // avoiding the need to import por/bjo directly.
 func NewProverFromWire(s *suite.Suite, wp WireParams, sentinels [][]byte) *Prover {
 	return &Prover{s: s, params: wp.toParams(), sentinels: sentinels}
+}
+
+// ProofBytes returns the binary size of a proof: Mj + Qj byte slices.
+func (p *Prover) ProofBytes(proof line.Proof) int {
+	var wp wireProof
+	if err := json.Unmarshal(proof, &wp); err != nil {
+		return len(proof)
+	}
+	return len(wp.Mj) + len(wp.Qj)
 }
 
 // Prove implements line.Prover. store is called for each challenged encoded block.

@@ -77,3 +77,15 @@ type ProverFactory interface {
 type ChallengerFactory interface {
 	NewChallenger(setup []byte, c int) (Challenger, error)
 }
+
+// ChalSizer is implemented by Challengers that can report the binary
+// (non-JSON) byte count of a challenge message.
+type ChalSizer interface {
+	ChalBytes(Challenge) int
+}
+
+// ProofSizer is implemented by Provers that can report the binary
+// (non-JSON) byte count of a proof message.
+type ProofSizer interface {
+	ProofBytes(Proof) int
+}

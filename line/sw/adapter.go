@@ -172,6 +172,19 @@ func (ch *Challenger) DetectionProbability(n int, corruptFraction float64) float
 	return confidence.HypergeometricDetection(n, ch.sk.Params.L, corruptFraction)
 }
 
+// ChalBytes returns the binary size of a challenge: C*(index+coeff).
+func (ch *Challenger) ChalBytes(chal line.Challenge) int {
+	var wc wireChal
+	if err := json.Unmarshal(chal, &wc); err != nil {
+		return len(chal)
+	}
+	n := 4 * len(wc.Indices)
+	for _, c := range wc.Coeffs {
+		n += len(c.Bytes())
+	}
+	return n
+}
+
 func (ch *Challenger) Challenge(numBlocks int) (line.Challenge, line.Validator, error) {
 	chal, err := porsw.MakeChallenge(numBlocks, ch.sk.Params)
 	if err != nil {
@@ -211,6 +224,19 @@ func NewProver(params *porsw.Params, tags []line.Tag) (*Prover, error) {
 		decoded[i] = &porsw.Tag{Sigma: wt.Sigma}
 	}
 	return &Prover{params: params, tags: decoded}, nil
+}
+
+// ProofBytes returns the binary size of a proof: sigma plus each mu value.
+func (p *Prover) ProofBytes(proof line.Proof) int {
+	var wp wireProof
+	if err := json.Unmarshal(proof, &wp); err != nil {
+		return len(proof)
+	}
+	n := len(wp.Sigma.Bytes())
+	for _, mu := range wp.Mu {
+		n += len(mu.Bytes())
+	}
+	return n
 }
 
 // Prove implements line.Prover. store is 0-indexed.
