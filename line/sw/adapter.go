@@ -49,7 +49,7 @@ func NewTagger(sk *porsw.SecretKey, s *suite.Suite) *Tagger {
 }
 
 func (t *Tagger) TagBlocks(store blocks.BlockStore) ([]line.Tag, error) {
-	raw, err := porsw.TagFile(t.s, t.sk, store)
+	raw, err := porsw.TagBlocks(t.s, t.sk, store)
 	if err != nil {
 		return nil, fmt.Errorf("sw.TagBlocks: %w", err)
 	}

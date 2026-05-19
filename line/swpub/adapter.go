@@ -79,7 +79,7 @@ type Tagger struct {
 func NewTagger(ps *porsw.PubScheme) *Tagger { return &Tagger{ps: ps} }
 
 func (t *Tagger) TagBlocks(store blocks.BlockStore) ([]line.Tag, error) {
-	raw, err := t.ps.TagFile(store)
+	raw, err := t.ps.TagBlocks(store)
 	if err != nil {
 		return nil, fmt.Errorf("swpub.TagBlocks: %w", err)
 	}

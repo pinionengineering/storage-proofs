@@ -33,7 +33,7 @@ func randZP(t *testing.T, P *big.Int) *big.Int {
 //
 //	σ_i = PRF_K(i) mod P + Σ_{j=1}^S f_{i,j}·α_j  mod P
 //
-// TagFile must produce exactly this value for each block.
+// TagBlocks must produce exactly this value for each block.
 func TestTagEquation(t *testing.T) {
 	P := testP
 	params := &Params{S: 3, L: 2, P: P}
@@ -50,7 +50,7 @@ func TestTagEquation(t *testing.T) {
 	block := make([]byte, 48) // 48 bytes / 3 sectors = 16 bytes per sector
 	rand.Read(block)
 
-	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore([][]byte{block}))
+	tags, err := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore([][]byte{block}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestVerificationEquation(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	tags, err := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestVerificationEquationTamperedMu(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags, _ := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	tags, _ := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
 	chal, _ := MakeChallenge(len(file), params)
 	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
@@ -264,7 +264,7 @@ func TestVerificationEquationTamperedSigma(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags, _ := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	tags, _ := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
 	chal, _ := MakeChallenge(len(file), params)
 	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
@@ -384,7 +384,7 @@ func TestProofSigmaLinearity(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	tags, err := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +424,7 @@ func TestProofMuLinearity(t *testing.T) {
 		rand.Read(b)
 		file[i] = b
 	}
-	tags, _ := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	tags, _ := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
 	chal, _ := MakeChallenge(len(file), params)
 	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)

@@ -169,20 +169,20 @@ func KeyGen(params *Params) (*SecretKey, error) {
 	return &SecretKey{K: k, Alpha: alpha, Params: params}, nil
 }
 
-// TagFile computes one Tag per block and returns them in order.
+// TagBlocks computes one Tag per block and returns them in order.
 //
 // The client uploads the file and tags to the server, then discards both,
 // retaining only sk.
 //
 // σ_i = PRF_K(i) mod P + Σ_{j=1}^S f_{i,j}·α_j  mod P
-func TagFile(s *suite.Suite, sk *SecretKey, store blocks.BlockStore) ([]*Tag, error) {
+func TagBlocks(s *suite.Suite, sk *SecretKey, store blocks.BlockStore) ([]*Tag, error) {
 	p := sk.Params
 	n := store.Len()
 	tags := make([]*Tag, n)
 	for i := range n {
 		block, err := store.Block(i)
 		if err != nil {
-			return nil, fmt.Errorf("sw.TagFile: block %d: %w", i, err)
+			return nil, fmt.Errorf("sw.TagBlocks: block %d: %w", i, err)
 		}
 		sigma := new(big.Int).Mod(s.PRF(sk.K, i), p.P)
 		for j := range p.S {

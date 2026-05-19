@@ -27,9 +27,9 @@ func NewPrivScheme(s *suitemod.Suite, params *Params) (*PrivScheme, error) {
 
 func (ps *PrivScheme) Kind() SchemeKind { return PrivKind }
 
-// TagFile serializes each tag as big-endian Z_P bytes.
-func (ps *PrivScheme) TagFile(store blocks.BlockStore) ([][]byte, error) {
-	tags, err := TagFile(ps.suite, ps.sk, store)
+// TagBlocks serializes each tag as big-endian Z_P bytes.
+func (ps *PrivScheme) TagBlocks(store blocks.BlockStore) ([][]byte, error) {
+	tags, err := TagBlocks(ps.suite, ps.sk, store)
 	if err != nil {
 		return nil, err
 	}

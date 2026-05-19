@@ -40,12 +40,12 @@ type SWProof struct {
 type Scheme interface {
 	Kind() SchemeKind
 
-	// TagFile computes one serialized tag per block. The client uploads
-	// (file, tags) to the server and retains only the key material embedded
+	// TagBlocks computes one serialized tag per block. The client uploads
+	// (blocks, tags) to the server and retains only the key material embedded
 	// in the Scheme instance.
-	TagFile(store blocks.BlockStore) ([][]byte, error)
+	TagBlocks(store blocks.BlockStore) ([][]byte, error)
 
-	// MakeChallenge returns a fresh random challenge for a file of n blocks.
+	// MakeChallenge returns a fresh random challenge for n blocks.
 	// For PubKind, any holder of the public key can call this.
 	MakeChallenge(n int) (*SWChallenge, error)
 

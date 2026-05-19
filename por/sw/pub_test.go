@@ -24,18 +24,18 @@ func pubScheme(t *testing.T) *PubScheme {
 // --- 1. End-to-end game ------------------------------------------------------
 
 // TestPubChallengeGame runs the full §3.3 protocol for 10 rounds:
-// NewPubScheme, TagFile, MakeChallenge, RespondFetch, Verify.
+// NewPubScheme, TagBlocks, MakeChallenge, RespondFetch, Verify.
 // All rounds must pass on the same (alpha, pk, tags) triple.
 func TestPubChallengeGame(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 20, 32)
 
-	tags, err := ps.TagFile(blocks.NewMemStore(file))
+	tags, err := ps.TagBlocks(blocks.NewMemStore(file))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(tags) != len(file) {
-		t.Fatalf("TagFile returned %d tags, want %d", len(tags), len(file))
+		t.Fatalf("TagBlocks returned %d tags, want %d", len(tags), len(file))
 	}
 
 	for round := range 10 {
@@ -65,7 +65,7 @@ func TestVerifyPub(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 15, 32)
 
-	tags, _ := ps.TagFile(blocks.NewMemStore(file))
+	tags, _ := ps.TagBlocks(blocks.NewMemStore(file))
 	chal, _ := ps.MakeChallenge(len(file))
 	proof, _ := ps.RespondFetch(tags, chal, blocks.NewMemStore(file))
 
@@ -85,7 +85,7 @@ func TestVerifyPubTamperedMu(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 15, 32)
 
-	tags, _ := ps.TagFile(blocks.NewMemStore(file))
+	tags, _ := ps.TagBlocks(blocks.NewMemStore(file))
 	chal, _ := ps.MakeChallenge(len(file))
 	proof, _ := ps.RespondFetch(tags, chal, blocks.NewMemStore(file))
 
@@ -107,7 +107,7 @@ func TestVerifyPubTamperedSigma(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 15, 32)
 
-	tags, _ := ps.TagFile(blocks.NewMemStore(file))
+	tags, _ := ps.TagBlocks(blocks.NewMemStore(file))
 	chal, _ := ps.MakeChallenge(len(file))
 	proof, _ := ps.RespondFetch(tags, chal, blocks.NewMemStore(file))
 
@@ -128,7 +128,7 @@ func TestVerifyPubTamperedSigma(t *testing.T) {
 func TestPubTamperedBlockFails(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 20, 32)
-	tags, _ := ps.TagFile(blocks.NewMemStore(file))
+	tags, _ := ps.TagBlocks(blocks.NewMemStore(file))
 
 	anyFailed := false
 	for range 10 {
@@ -158,16 +158,16 @@ func TestPubTamperedBlockFails(t *testing.T) {
 
 // --- 4. Scheme interface -----------------------------------------------------
 
-// runScheme exercises the Scheme interface for any implementation: TagFile,
+// runScheme exercises the Scheme interface for any implementation: TagBlocks,
 // MakeChallenge, RespondFetch, Verify across nRounds independent challenges.
 func runScheme(t *testing.T, scheme Scheme, nBlocks, blockSize, nRounds int) {
 	t.Helper()
 	file := randomFile(t, nBlocks, blockSize)
 	store := blocks.NewMemStore(file)
 
-	tags, err := scheme.TagFile(store)
+	tags, err := scheme.TagBlocks(store)
 	if err != nil {
-		t.Fatalf("TagFile: %v", err)
+		t.Fatalf("TagBlocks: %v", err)
 	}
 
 	for round := range nRounds {
@@ -230,7 +230,7 @@ func TestPubSmallFile(t *testing.T) {
 	}
 
 	file := randomFile(t, 3, 32)
-	tags, _ := ps.TagFile(blocks.NewMemStore(file))
+	tags, _ := ps.TagBlocks(blocks.NewMemStore(file))
 
 	chal, err := ps.MakeChallenge(len(file))
 	if err != nil {

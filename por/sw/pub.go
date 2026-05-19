@@ -66,7 +66,7 @@ type PubPublicKey struct {
 }
 
 // PubScheme implements the §3.3 public-key SW scheme as a Scheme.
-// Holds the secret scalar α so it can tag files; Verify uses only PubKey.
+// Holds the secret scalar α so it can tag blocks; Verify uses only PubKey.
 type PubScheme struct {
 	alpha  *big.Int
 	pk     *PubPublicKey
@@ -128,12 +128,20 @@ func pubHashG1(data []byte) *bn256.G1 {
 	return new(bn256.G1).ScalarBaseMult(k)
 }
 
+// blockHashG1ID returns H(name‖id) ∈ G₁ for an arbitrary block identifier id ∈ {0,1}*.
+// This is the general form of blockHashG1; any unique byte string may serve as id.
+func blockHashG1ID(name, id []byte) *bn256.G1 {
+	buf := make([]byte, len(name)+len(id))
+	copy(buf, name)
+	copy(buf[len(name):], id)
+	return pubHashG1(buf)
+}
+
 // blockHashG1 returns H(name‖i) ∈ G₁.
 func blockHashG1(name []byte, i int) *bn256.G1 {
-	buf := make([]byte, len(name)+8)
-	copy(buf, name)
-	binary.BigEndian.PutUint64(buf[len(name):], uint64(i))
-	return pubHashG1(buf)
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], uint64(i))
+	return blockHashG1ID(name, buf[:])
 }
 
 // pubSectorElem extracts sector j of block as an element of Z_q (curve order).
@@ -151,18 +159,18 @@ func pubSectorElem(block []byte, j, s int) *big.Int {
 	return new(big.Int).Mod(new(big.Int).SetBytes(block[start:end]), bn256.Order)
 }
 
-// TagFile computes σ_i = α·(H(Name‖i) + Σ_j f_{i,j}·u_j) ∈ G₁ for each block.
-// Each tag is marshalled as 64 bytes (uncompressed G₁ point).
-func (ps *PubScheme) TagFile(store blocks.BlockStore) ([][]byte, error) {
+// tagBlocksCore computes σ_i = α·(hashBlock(i) + Σ_j f_{i,j}·u_j) ∈ G₁ for each block.
+// hashBlock(i) returns H(name‖blockID_i) for whatever block-identifier scheme the caller uses.
+func (ps *PubScheme) tagBlocksCore(store blocks.BlockStore, hashBlock func(i int) *bn256.G1) ([][]byte, error) {
 	n := store.Len()
 	out := make([][]byte, n)
 	for i := range n {
 		block, err := store.Block(i)
 		if err != nil {
-			return nil, fmt.Errorf("sw.PubScheme.TagFile: block %d: %w", i, err)
+			return nil, fmt.Errorf("sw.PubScheme.TagBlocks: block %d: %w", i, err)
 		}
-		// acc = H(Name‖i) + Σ_j f_{i,j}·u_j  (additive G₁ notation)
-		acc := blockHashG1(ps.pk.Name, i)
+		// acc = H(name‖id_i) + Σ_j f_{i,j}·u_j  (additive G₁ notation)
+		acc := hashBlock(i)
 		for j := range ps.s {
 			fij := pubSectorElem(block, j, ps.s)
 			term := new(bn256.G1).ScalarMult(ps.pk.U[j], fij)
@@ -172,6 +180,26 @@ func (ps *PubScheme) TagFile(store blocks.BlockStore) ([][]byte, error) {
 		out[i] = new(bn256.G1).ScalarMult(acc, ps.alpha).Marshal()
 	}
 	return out, nil
+}
+
+// TagBlocks computes σ_i = α·(H(Name‖i) + Σ_j f_{i,j}·u_j) ∈ G₁ for each block.
+// Each tag is marshalled as 64 bytes (uncompressed G₁ point).
+func (ps *PubScheme) TagBlocks(store blocks.BlockStore) ([][]byte, error) {
+	name := ps.pk.Name
+	return ps.tagBlocksCore(store, func(i int) *bn256.G1 { return blockHashG1(name, i) })
+}
+
+// TagBlocksWith computes σ_i = α·(H(Name‖ids[i]) + Σ_j f_{i,j}·u_j) ∈ G₁ using
+// per-block identifiers ids[i] ∈ {0,1}* in place of the default uint64(i).
+// This generalises Pub.St (§3.3 of Shacham-Waters 2008) to block stores where
+// each block carries its own unique identifier rather than a sequential index.
+// ids must have exactly store.Len() entries.
+func (ps *PubScheme) TagBlocksWith(store blocks.BlockStore, ids [][]byte) ([][]byte, error) {
+	if len(ids) != store.Len() {
+		return nil, fmt.Errorf("sw.PubScheme.TagBlocksWith: %d ids for %d blocks", len(ids), store.Len())
+	}
+	name := ps.pk.Name
+	return ps.tagBlocksCore(store, func(i int) *bn256.G1 { return blockHashG1ID(name, ids[i]) })
 }
 
 // MakeChallenge generates a fresh challenge with coefficients in Z_q.

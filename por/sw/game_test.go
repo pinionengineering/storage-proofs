@@ -37,7 +37,7 @@ func randomFile(t *testing.T, n, blockSize int) [][]byte {
 }
 
 // TestSWChallengeGame runs the full SW protocol end-to-end:
-// KeyGen, TagFile, MakeChallenge, Respond, Verify across multiple rounds.
+// KeyGen, TagBlocks, MakeChallenge, Respond, Verify across multiple rounds.
 // SW supports unlimited audits — we run 20 rounds to confirm re-use.
 func TestSWChallengeGame(t *testing.T) {
 	params := smallParams()
@@ -48,13 +48,13 @@ func TestSWChallengeGame(t *testing.T) {
 	}
 
 	file := randomFile(t, 50, 32)
-	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	tags, err := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if len(tags) != len(file) {
-		t.Fatalf("TagFile returned %d tags, want %d", len(tags), len(file))
+		t.Fatalf("TagBlocks returned %d tags, want %d", len(tags), len(file))
 	}
 
 	for round := range 20 {
@@ -89,7 +89,7 @@ func TestSWTamperedBlockFails(t *testing.T) {
 	}
 
 	file := randomFile(t, 30, 32)
-	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	tags, err := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestSWUnlimitedChallenges(t *testing.T) {
 	}
 
 	file := randomFile(t, 20, 32)
-	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	tags, err := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestSWRespondFetchEquivalent(t *testing.T) {
 	}
 
 	file := randomFile(t, 15, 32)
-	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	tags, err := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestSWSmallFile(t *testing.T) {
 	}
 
 	file := randomFile(t, 3, 32) // only 3 blocks
-	tags, err := TagFile(suite.SuiteV1, sk, blocks.NewMemStore(file))
+	tags, err := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 	if err != nil {
 		t.Fatal(err)
 	}
