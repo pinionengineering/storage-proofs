@@ -293,12 +293,10 @@ func (ps *PubScheme) Verify(chal *SWChallenge, proof *SWProof) (bool, error) {
 	return VerifyPub(ps.pk, chal, proof)
 }
 
-// VerifyPub performs public verification given only the public key.
-// This is the distinguishing property of §3.3: anyone who holds pk can audit
-// the server without access to the secret scalar α.
-//
-// Checks: e(σ, G₂) == e(Σ_t ν_t·H(Name‖i_t) + Σ_j μ_j·u_j, v)
-func VerifyPub(pk *PubPublicKey, chal *SWChallenge, proof *SWProof) (bool, error) {
+// verifyPubCore performs the pairing check e(σ, G₂) == e(A, v) where
+// A = Σ_t ν_t·hashBlock(t) + Σ_j μ_j·u_j. hashBlock(t) returns the G₁ point
+// for the t-th challenged block under whatever block-identifier scheme the caller uses.
+func verifyPubCore(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, hashBlock func(t int) *bn256.G1) (bool, error) {
 	if len(proof.Mu) != len(pk.U) {
 		return false, fmt.Errorf("sw.VerifyPub: proof has %d μ elements, want %d", len(proof.Mu), len(pk.U))
 	}
@@ -308,11 +306,11 @@ func VerifyPub(pk *PubPublicKey, chal *SWChallenge, proof *SWProof) (bool, error
 		return false, fmt.Errorf("sw.VerifyPub: sigma: %w", err)
 	}
 
-	// A = Σ_t ν_t·H(Name‖i_t) + Σ_j μ_j·u_j  ∈ G₁
+	// A = Σ_t ν_t·H(Name‖id_t) + Σ_j μ_j·u_j  ∈ G₁
 	var a *bn256.G1
-	for t, idx := range chal.Indices {
+	for t := range chal.Indices {
 		nu := chal.Coeffs[t]
-		term := new(bn256.G1).ScalarMult(blockHashG1(pk.Name, idx), nu)
+		term := new(bn256.G1).ScalarMult(hashBlock(t), nu)
 		if a == nil {
 			a = term
 		} else {
@@ -333,4 +331,30 @@ func VerifyPub(pk *PubPublicKey, chal *SWChallenge, proof *SWProof) (bool, error
 	rhs := bn256.Pair(a, pk.V)
 
 	return bytes.Equal(lhs.Marshal(), rhs.Marshal()), nil
+}
+
+// VerifyPub performs public verification given only the public key.
+// This is the distinguishing property of §3.3: anyone who holds pk can audit
+// the server without access to the secret scalar α.
+//
+// Checks: e(σ, G₂) == e(Σ_t ν_t·H(Name‖i_t) + Σ_j μ_j·u_j, v)
+func VerifyPub(pk *PubPublicKey, chal *SWChallenge, proof *SWProof) (bool, error) {
+	return verifyPubCore(pk, chal, proof, func(t int) *bn256.G1 {
+		return blockHashG1(pk.Name, chal.Indices[t])
+	})
+}
+
+// VerifyPubWith is the Pub.V algorithm (§3.3) with caller-supplied per-block
+// identifiers ids[t] ∈ {0,1}* for the t-th challenged block, in place of the
+// default uint64(chal.Indices[t]). This is valid because §3.3 defines
+// H : {0,1}* → G as a random oracle over arbitrary bit strings; any unique
+// identifier may serve as input. ids must have exactly len(chal.Indices) entries,
+// matching those passed to TagBlocksWith at tag time.
+func VerifyPubWith(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error) {
+	if len(ids) != len(chal.Indices) {
+		return false, fmt.Errorf("sw.VerifyPubWith: %d ids for %d challenged blocks", len(ids), len(chal.Indices))
+	}
+	return verifyPubCore(pk, chal, proof, func(t int) *bn256.G1 {
+		return blockHashG1ID(pk.Name, ids[t])
+	})
 }
