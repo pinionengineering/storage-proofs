@@ -68,7 +68,7 @@ func TestSWChallengeGame(t *testing.T) {
 			t.Fatalf("Respond(round=%d): %v", round, err)
 		}
 
-		ok, err := Verify(suite.SuiteV1, sk, chal, proof)
+		ok, err := Verify(suite.SuiteV1, sk, blocks.NewMemStore(file).IDs(), chal, proof)
 		if err != nil {
 			t.Fatalf("Verify(round=%d): %v", round, err)
 		}
@@ -107,7 +107,7 @@ func TestSWTamperedBlockFails(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RespondFetch: %v", err)
 		}
-		ok, err := Verify(suite.SuiteV1, sk, chal, proof)
+		ok, err := Verify(suite.SuiteV1, sk, blocks.NewMemStore(file).IDs(), chal, proof)
 		if err != nil {
 			t.Fatalf("Verify: %v", err)
 		}
@@ -146,7 +146,7 @@ func TestSWUnlimitedChallenges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Respond(round=%d): %v", round, err)
 		}
-		ok, err := Verify(suite.SuiteV1, sk, chal, proof)
+		ok, err := Verify(suite.SuiteV1, sk, blocks.NewMemStore(file).IDs(), chal, proof)
 		if err != nil {
 			t.Fatalf("Verify(round=%d): %v", round, err)
 		}
@@ -230,7 +230,7 @@ func TestSWSmallFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err := Verify(suite.SuiteV1, sk, chal, proof)
+	ok, err := Verify(suite.SuiteV1, sk, blocks.NewMemStore(file).IDs(), chal, proof)
 	if err != nil {
 		t.Fatal(err)
 	}

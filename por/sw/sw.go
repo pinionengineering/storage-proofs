@@ -288,11 +288,14 @@ func Respond(params *Params, store blocks.BlockStore, tags []*Tag, chal *Challen
 
 // Verify checks whether the server's proof is valid.
 //
-// It recomputes the expected σ from the challenge, the PRF key K, and the
-// secret scalars α, then compares it to proof.Sigma.
+// ids is store.IDs() from the audited store; it is used to derive the PRF
+// input for each challenged block via IDInt(ids[idx]), matching what TagBlocks
+// computed at setup. For standard sequential stores IDInt(ids[idx]) == idx, so
+// behavior is unchanged. For stores with arbitrary IDs the caller must pass the
+// same IDs that were present during TagBlocks.
 //
 // §3: "σ == Σ_t ν_t·PRF_K(i_t) + Σ_j μ_j·α_j  mod P"
-func Verify(s *suite.Suite, sk *SecretKey, chal *Challenge, proof *Proof) (bool, error) {
+func Verify(s *suite.Suite, sk *SecretKey, ids [][]byte, chal *Challenge, proof *Proof) (bool, error) {
 	p := sk.Params
 	P := p.P
 
@@ -302,10 +305,10 @@ func Verify(s *suite.Suite, sk *SecretKey, chal *Challenge, proof *Proof) (bool,
 
 	expected := big.NewInt(0)
 
-	// Σ_t ν_t · PRF_K(i_t) mod P
+	// Σ_t ν_t · PRF_K(i_t) mod P — i_t matches TagBlocks which uses IDInt(id).
 	for t, idx := range chal.Indices {
 		nu := chal.Coeffs[t]
-		prf := new(big.Int).Mod(s.PRF(sk.K, idx), P)
+		prf := new(big.Int).Mod(s.PRF(sk.K, blocks.IDInt(ids[idx])), P)
 		expected.Add(expected, new(big.Int).Mul(nu, prf))
 		expected.Mod(expected, P)
 	}

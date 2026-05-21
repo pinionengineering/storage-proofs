@@ -205,7 +205,7 @@ func TestVerificationEquation(t *testing.T) {
 		t.Fatalf("verification equation: proof.Sigma = %v, expected = %v", proof.Sigma, expected)
 	}
 
-	ok, err := Verify(suite.SuiteV1, sk, chal, proof)
+	ok, err := Verify(suite.SuiteV1, sk, blocks.NewMemStore(file).IDs(), chal, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestVerificationEquationTamperedMu(t *testing.T) {
 	proof.Mu[0].Add(proof.Mu[0], big.NewInt(1))
 	proof.Mu[0].Mod(proof.Mu[0], P)
 
-	ok, err := Verify(suite.SuiteV1, sk, chal, proof)
+	ok, err := Verify(suite.SuiteV1, sk, blocks.NewMemStore(file).IDs(), chal, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestVerificationEquationTamperedSigma(t *testing.T) {
 	proof.Sigma.Add(proof.Sigma, big.NewInt(1))
 	proof.Sigma.Mod(proof.Sigma, P)
 
-	ok, err := Verify(suite.SuiteV1, sk, chal, proof)
+	ok, err := Verify(suite.SuiteV1, sk, blocks.NewMemStore(file).IDs(), chal, proof)
 	if err != nil {
 		t.Fatal(err)
 	}

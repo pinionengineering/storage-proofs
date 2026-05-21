@@ -302,7 +302,7 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 	if err := json.Unmarshal(proof, &wp); err != nil {
 		return false, fmt.Errorf("sw.Verify: proof: %w", err)
 	}
-	return porsw.Verify(s, v.sk,
+	return porsw.Verify(s, v.sk, ids,
 		&porsw.Challenge{Indices: indices, Coeffs: coeffs},
 		&porsw.Proof{Sigma: wp.Sigma, Mu: wp.Mu},
 	)
