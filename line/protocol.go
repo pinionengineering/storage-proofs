@@ -26,11 +26,12 @@ type Tagger interface {
 
 // Challenger generates audit challenges.
 type Challenger interface {
-	// Challenge produces a fresh challenge for a file of numBlocks blocks.
-	// The returned bytes are suitable for transmission to a Prover.
-	// The returned Validator is bound to this specific challenge round and
-	// must be used to verify the corresponding proof.
-	Challenge(numBlocks int) (Challenge, Validator, error)
+	// Challenge produces a fresh challenge for a file whose block identifiers
+	// are given by ids (store.IDs() at audit time). The returned bytes are
+	// suitable for transmission to a Prover. The returned Validator is bound to
+	// this specific challenge round and must be used to verify the corresponding
+	// proof.
+	Challenge(ids [][]byte) (Challenge, Validator, error)
 }
 
 // Prover responds to audit challenges on behalf of the storage server.

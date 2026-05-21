@@ -161,7 +161,7 @@ var schemes = []schemeSpec{
 						return nil, err
 					}
 					fn = func() (setupTagger, error) {
-						return lineSwPub.NewTagger(ps), nil
+						return lineSwPub.NewTagger(ps, suite.SuiteV1), nil
 					}
 					cache[chalSize] = fn
 				}
@@ -227,7 +227,7 @@ func run(sch schemeSpec, store blockspkg.BlockStore, p Params) (Metrics, error) 
 		return Metrics{}, err
 	}
 
-	chal, validator, err := challenger.Challenge(encoded.Len())
+	chal, validator, err := challenger.Challenge(encoded.IDs())
 	if err != nil {
 		return Metrics{}, err
 	}

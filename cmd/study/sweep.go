@@ -233,6 +233,7 @@ func sweepDetection() (LineChart, error) {
 		name, color string
 		theoryC     int
 		nEncoded    int
+		encodedIDs  [][]byte
 		clientSetup []byte
 		prover      line.Prover
 		honest      [][]byte
@@ -275,6 +276,7 @@ func sweepDetection() (LineChart, error) {
 		entries = append(entries, detEntry{
 			name: sch.name, color: sch.color,
 			theoryC: c, nEncoded: len(honest),
+			encodedIDs:  encoded.IDs(),
 			clientSetup: cs, prover: prover, honest: honest,
 			chalFactory: sch.chalFactory,
 		})
@@ -304,7 +306,7 @@ func sweepDetection() (LineChart, error) {
 						grid[i][j] = cellResult{err: err}
 						return
 					}
-					chal, validator, err := ch.Challenge(entry.nEncoded)
+					chal, validator, err := ch.Challenge(entry.encodedIDs)
 					if err != nil {
 						grid[i][j] = cellResult{err: err}
 						return

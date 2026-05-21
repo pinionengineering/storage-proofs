@@ -12,27 +12,27 @@
 //
 // Tagging: for each block i with sector values f_{i,j} = sectorElem(block,j) ∈ Z_q,
 //
-//	σ_i = α·(H(λ‖i) + Σ_j f_{i,j}·u_j) ∈ G₁
+//	σ_i = α·(H(λ‖id_i) + Σ_j f_{i,j}·u_j) ∈ G₁
 //
-// where H(λ‖i) = SHA-256(λ‖i) mod q · G₁ (ROM hash to G₁).
+// where H(λ‖id_i) = SHA-256(λ‖id_i) mod q · G₁ (ROM hash to G₁).
 //
-// Proof (server): given challenge (i_t, ν_t):
+// Proof (server): given challenge (id_t, ν_t):
 //
 //	σ   = Σ_t ν_t · σ_{i_t}               ∈ G₁
 //	μ_j = Σ_t ν_t · f_{i_t,j} mod q       ∈ Z_q
 //
 // Verification: check
 //
-//	e(σ, G₂) == e(Σ_t ν_t·H(λ‖i_t) + Σ_j μ_j·u_j, v)
+//	e(σ, G₂) == e(Σ_t ν_t·H(λ‖id_t) + Σ_j μ_j·u_j, v)
 //
 // Correctness: substituting the tag definition into σ and using bilinearity of
 // e gives the identity for any honest response.
 //
 // # Security note on H
 //
-// H(λ‖i) = sha256(λ‖i) mod q · G₁ maps to a scalar multiple of the generator.
-// The discrete log of H(λ‖i) w.r.t. the generator is publicly computable, but
-// the discrete log of H(λ‖i) w.r.t. any u_j is sha256(λ‖i) / r_j mod q where
+// H(λ‖id) = sha256(λ‖id) mod q · G₁ maps to a scalar multiple of the generator.
+// The discrete log of H(λ‖id) w.r.t. the generator is publicly computable, but
+// the discrete log of H(λ‖id) w.r.t. any u_j is sha256(λ‖id) / r_j mod q where
 // r_j was discarded — hence unknown. Under the computational Diffie-Hellman
 // assumption, this is sufficient for the scheme's security proof.
 
@@ -42,7 +42,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"math/big"
 
@@ -53,8 +52,8 @@ import (
 // PubPublicKey is the public key for the §3.3 BLS-based scheme.
 // It is sufficient for verification; the secret scalar α is never included.
 type PubPublicKey struct {
-	// Name is a 16-byte random file identifier bound into every tag via H(Name‖i).
-	// The verifier must know Name to reconstruct H for the challenged indices.
+	// Name is a 16-byte random file identifier bound into every tag via H(Name‖id).
+	// The verifier must know Name to reconstruct H for the challenged identifiers.
 	Name []byte
 
 	// V = α·G₂ is the public verification key derived from the secret α.
@@ -68,9 +67,9 @@ type PubPublicKey struct {
 // PubScheme implements the §3.3 public-key SW scheme as a Scheme.
 // Holds the secret scalar α so it can tag blocks; Verify uses only PubKey.
 type PubScheme struct {
-	alpha  *big.Int
-	pk     *PubPublicKey
-	s, l   int
+	alpha *big.Int
+	pk    *PubPublicKey
+	s, l  int
 }
 
 // NewPubScheme generates a fresh PubScheme: secret α, public (v, u₁,...,uₛ, λ).
@@ -128,20 +127,12 @@ func pubHashG1(data []byte) *bn256.G1 {
 	return new(bn256.G1).ScalarBaseMult(k)
 }
 
-// blockHashG1ID returns H(name‖id) ∈ G₁ for an arbitrary block identifier id ∈ {0,1}*.
-// This is the general form of blockHashG1; any unique byte string may serve as id.
-func blockHashG1ID(name, id []byte) *bn256.G1 {
+// blockHashG1 returns H(name‖id) ∈ G₁ for an arbitrary block identifier id ∈ {0,1}*.
+func blockHashG1(name, id []byte) *bn256.G1 {
 	buf := make([]byte, len(name)+len(id))
 	copy(buf, name)
 	copy(buf[len(name):], id)
 	return pubHashG1(buf)
-}
-
-// blockHashG1 returns H(name‖i) ∈ G₁.
-func blockHashG1(name []byte, i int) *bn256.G1 {
-	var buf [8]byte
-	binary.BigEndian.PutUint64(buf[:], uint64(i))
-	return blockHashG1ID(name, buf[:])
 }
 
 // pubSectorElem extracts sector j of block as an element of Z_q (curve order).
@@ -159,54 +150,33 @@ func pubSectorElem(block []byte, j, s int) *big.Int {
 	return new(big.Int).Mod(new(big.Int).SetBytes(block[start:end]), bn256.Order)
 }
 
-// tagBlocksCore computes σ_i = α·(hashBlock(i) + Σ_j f_{i,j}·u_j) ∈ G₁ for each block.
-// hashBlock(i) returns H(name‖blockID_i) for whatever block-identifier scheme the caller uses.
-func (ps *PubScheme) tagBlocksCore(store blocks.BlockStore, hashBlock func(i int) *bn256.G1) ([][]byte, error) {
-	n := store.Len()
+// TagBlocks computes σ_i = α·(H(Name‖id_i) + Σ_j f_{i,j}·u_j) ∈ G₁ for each block.
+// Each tag is marshalled as 64 bytes (uncompressed G₁ point).
+func (ps *PubScheme) TagBlocks(store blocks.BlockStore) ([][]byte, error) {
+	ids := store.IDs()
+	n := len(ids)
 	out := make([][]byte, n)
-	for i := range n {
-		block, err := store.Block(i)
+	for i, id := range ids {
+		block, err := store.Block(id)
 		if err != nil {
 			return nil, fmt.Errorf("sw.PubScheme.TagBlocks: block %d: %w", i, err)
 		}
-		// acc = H(name‖id_i) + Σ_j f_{i,j}·u_j  (additive G₁ notation)
-		acc := hashBlock(i)
+		acc := blockHashG1(ps.pk.Name, id)
 		for j := range ps.s {
 			fij := pubSectorElem(block, j, ps.s)
-			term := new(bn256.G1).ScalarMult(ps.pk.U[j], fij)
-			acc = new(bn256.G1).Add(acc, term)
+			acc = new(bn256.G1).Add(acc, new(bn256.G1).ScalarMult(ps.pk.U[j], fij))
 		}
-		// σ_i = α · acc
 		out[i] = new(bn256.G1).ScalarMult(acc, ps.alpha).Marshal()
 	}
 	return out, nil
 }
 
-// TagBlocks computes σ_i = α·(H(Name‖i) + Σ_j f_{i,j}·u_j) ∈ G₁ for each block.
-// Each tag is marshalled as 64 bytes (uncompressed G₁ point).
-func (ps *PubScheme) TagBlocks(store blocks.BlockStore) ([][]byte, error) {
-	name := ps.pk.Name
-	return ps.tagBlocksCore(store, func(i int) *bn256.G1 { return blockHashG1(name, i) })
-}
-
-// TagBlocksWith computes σ_i = α·(H(Name‖ids[i]) + Σ_j f_{i,j}·u_j) ∈ G₁ using
-// per-block identifiers ids[i] ∈ {0,1}* in place of the default uint64(i).
-// This generalises Pub.St (§3.3 of Shacham-Waters 2008) to block stores where
-// each block carries its own unique identifier rather than a sequential index.
-// ids must have exactly store.Len() entries.
-func (ps *PubScheme) TagBlocksWith(store blocks.BlockStore, ids [][]byte) ([][]byte, error) {
-	if len(ids) != store.Len() {
-		return nil, fmt.Errorf("sw.PubScheme.TagBlocksWith: %d ids for %d blocks", len(ids), store.Len())
-	}
-	name := ps.pk.Name
-	return ps.tagBlocksCore(store, func(i int) *bn256.G1 { return blockHashG1ID(name, ids[i]) })
-}
-
 // MakeChallenge generates a fresh challenge with coefficients in Z_q.
-// Distinct indices are chosen via a partial Fisher-Yates shuffle.
-func (ps *PubScheme) MakeChallenge(n int) (*SWChallenge, error) {
+// Distinct IDs are chosen via a partial Fisher-Yates shuffle over index positions.
+func (ps *PubScheme) MakeChallenge(ids [][]byte) (*SWChallenge, error) {
+	n := len(ids)
 	if n <= 0 {
-		return nil, fmt.Errorf("sw.PubScheme.MakeChallenge: n must be positive")
+		return nil, fmt.Errorf("sw.PubScheme.MakeChallenge: ids must be non-empty")
 	}
 	l := ps.l
 	if l > n {
@@ -227,7 +197,9 @@ func (ps *PubScheme) MakeChallenge(n int) (*SWChallenge, error) {
 	}
 
 	indices := make([]int, l)
-	copy(indices, perm[:l])
+	for i := range l {
+		indices[i] = perm[i]
+	}
 
 	coeffs := make([]*big.Int, l)
 	for t := range l {
@@ -274,9 +246,9 @@ func (ps *PubScheme) RespondFetch(tags [][]byte, chal *SWChallenge, store blocks
 			sigmaAcc = new(bn256.G1).Add(sigmaAcc, term)
 		}
 
-		data, err := store.Block(idx)
+		data, err := blocks.BlockAt(store, idx)
 		if err != nil {
-			return nil, fmt.Errorf("sw.PubScheme.RespondFetch: block(%d): %w", idx, err)
+			return nil, fmt.Errorf("sw.PubScheme.RespondFetch: block %d: %w", idx, err)
 		}
 		for j := range ps.s {
 			fij := pubSectorElem(data, j, ps.s)
@@ -289,14 +261,15 @@ func (ps *PubScheme) RespondFetch(tags [][]byte, chal *SWChallenge, store blocks
 }
 
 // Verify calls VerifyPub with the embedded public key.
-func (ps *PubScheme) Verify(chal *SWChallenge, proof *SWProof) (bool, error) {
-	return VerifyPub(ps.pk, chal, proof)
+// ids is store.IDs() from the audited store; §3.3 uses them to compute H(λ‖id_t).
+func (ps *PubScheme) Verify(chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error) {
+	return VerifyPub(ps.pk, chal, proof, ids)
 }
 
 // verifyPubCore performs the pairing check e(σ, G₂) == e(A, v) where
-// A = Σ_t ν_t·hashBlock(t) + Σ_j μ_j·u_j. hashBlock(t) returns the G₁ point
-// for the t-th challenged block under whatever block-identifier scheme the caller uses.
-func verifyPubCore(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, hashBlock func(t int) *bn256.G1) (bool, error) {
+// A = Σ_t ν_t·H(Name‖id_t) + Σ_j μ_j·u_j  (§3.3).
+// ids is the ordered identifier list from store.IDs(); ids[chal.Indices[t]] gives id_t.
+func verifyPubCore(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error) {
 	if len(proof.Mu) != len(pk.U) {
 		return false, fmt.Errorf("sw.VerifyPub: proof has %d μ elements, want %d", len(proof.Mu), len(pk.U))
 	}
@@ -308,9 +281,9 @@ func verifyPubCore(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, hashBloc
 
 	// A = Σ_t ν_t·H(Name‖id_t) + Σ_j μ_j·u_j  ∈ G₁
 	var a *bn256.G1
-	for t := range chal.Indices {
+	for t, idx := range chal.Indices {
 		nu := chal.Coeffs[t]
-		term := new(bn256.G1).ScalarMult(hashBlock(t), nu)
+		term := new(bn256.G1).ScalarMult(blockHashG1(pk.Name, ids[idx]), nu)
 		if a == nil {
 			a = term
 		} else {
@@ -337,24 +310,10 @@ func verifyPubCore(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, hashBloc
 // This is the distinguishing property of §3.3: anyone who holds pk can audit
 // the server without access to the secret scalar α.
 //
-// Checks: e(σ, G₂) == e(Σ_t ν_t·H(Name‖i_t) + Σ_j μ_j·u_j, v)
-func VerifyPub(pk *PubPublicKey, chal *SWChallenge, proof *SWProof) (bool, error) {
-	return verifyPubCore(pk, chal, proof, func(t int) *bn256.G1 {
-		return blockHashG1(pk.Name, chal.Indices[t])
-	})
-}
-
-// VerifyPubWith is the Pub.V algorithm (§3.3) with caller-supplied per-block
-// identifiers ids[t] ∈ {0,1}* for the t-th challenged block, in place of the
-// default uint64(chal.Indices[t]). This is valid because §3.3 defines
-// H : {0,1}* → G as a random oracle over arbitrary bit strings; any unique
-// identifier may serve as input. ids must have exactly len(chal.Indices) entries,
-// matching those passed to TagBlocksWith at tag time.
-func VerifyPubWith(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error) {
-	if len(ids) != len(chal.Indices) {
-		return false, fmt.Errorf("sw.VerifyPubWith: %d ids for %d challenged blocks", len(ids), len(chal.Indices))
-	}
-	return verifyPubCore(pk, chal, proof, func(t int) *bn256.G1 {
-		return blockHashG1ID(pk.Name, ids[t])
-	})
+// ids is the ordered identifier list from store.IDs() at audit time; it is
+// used to reconstruct H(λ‖id_t) = H(λ‖ids[i_t]) for each challenged position i_t.
+//
+// Checks: e(σ, G₂) == e(Σ_t ν_t·H(λ‖id_t) + Σ_j μ_j·u_j, v)
+func VerifyPub(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error) {
+	return verifyPubCore(pk, chal, proof, ids)
 }

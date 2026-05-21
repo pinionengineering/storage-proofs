@@ -7,6 +7,7 @@
 package swpub
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -15,6 +16,7 @@ import (
 	"github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/line"
 	porsw "github.com/pinionengineering/storage-proofs/por/sw"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 // ---------------------------------------------------------------------------
@@ -25,8 +27,10 @@ import (
 // big.Int scalars in Z_q are serialized as fixed 32-byte big-endian.
 
 type wireChal struct {
-	Indices []int    `json:"indices"`
-	Coeffs  [][]byte `json:"coeffs"` // len(l) × 32 bytes, Z_q scalars
+	SuiteID uint8  `json:"suite_id"`
+	Seed    []byte `json:"seed"`
+	C       int    `json:"c"`
+	N       int    `json:"n"`
 }
 
 type wireProof struct {
@@ -36,6 +40,7 @@ type wireProof struct {
 
 type wireClientSetup struct {
 	Protocol string   `json:"protocol"`
+	SuiteID  uint8    `json:"suite_id"`
 	S        int      `json:"s"`
 	L        int      `json:"l"`
 	Name     []byte   `json:"name"` // 16 bytes
@@ -72,11 +77,12 @@ func fixed32ToBig(b []byte) *big.Int { return new(big.Int).SetBytes(b) }
 // Tagger creates per-block G1 tags and produces client/prover setup blobs.
 type Tagger struct {
 	ps    *porsw.PubScheme
+	s     *suite.Suite
 	store blocks.BlockStore // cached after TagBlocks
 	tags  [][]byte          // raw 64-byte G1 marshals, set after TagBlocks
 }
 
-func NewTagger(ps *porsw.PubScheme) *Tagger { return &Tagger{ps: ps} }
+func NewTagger(ps *porsw.PubScheme, s *suite.Suite) *Tagger { return &Tagger{ps: ps, s: s} }
 
 func (t *Tagger) TagBlocks(store blocks.BlockStore) ([]line.Tag, error) {
 	raw, err := t.ps.TagBlocks(store)
@@ -100,6 +106,7 @@ func (t *Tagger) ClientSetup() ([]byte, error) {
 	}
 	return json.Marshal(wireClientSetup{
 		Protocol: "swpub",
+		SuiteID:  t.s.ID(),
 		S:        t.ps.S(),
 		L:        t.ps.L(),
 		Name:     pk.Name,
@@ -134,6 +141,10 @@ func (challengerFactory) NewChallenger(setup []byte, _ int) (line.Challenger, er
 	if err := json.Unmarshal(setup, &ws); err != nil {
 		return nil, fmt.Errorf("swpub.NewChallenger: %w", err)
 	}
+	s, ok := suite.SuiteByID(ws.SuiteID)
+	if !ok {
+		return nil, fmt.Errorf("swpub.NewChallenger: unknown suite %d", ws.SuiteID)
+	}
 	v := new(bn256.G2)
 	if _, err := v.Unmarshal(ws.V); err != nil {
 		return nil, fmt.Errorf("swpub.NewChallenger: V: %w", err)
@@ -146,7 +157,7 @@ func (challengerFactory) NewChallenger(setup []byte, _ int) (line.Challenger, er
 		}
 	}
 	pk := &porsw.PubPublicKey{Name: ws.Name, V: v, U: u}
-	return &Challenger{pk: pk, s: ws.S, l: ws.L}, nil
+	return &Challenger{pk: pk, suite: s, s: ws.S, l: ws.L}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -172,40 +183,31 @@ func (proverFactory) NewProver(setup []byte, _ blocks.BlockStore) (line.Prover, 
 
 // Challenger implements line.Challenger for the SW public-key scheme.
 type Challenger struct {
-	pk *porsw.PubPublicKey
-	s  int
-	l  int
+	pk    *porsw.PubPublicKey
+	suite *suite.Suite
+	s     int
+	l     int
 }
 
-// ChalBytes returns the binary size of a challenge: C*(index+32-byte coeff).
-func (ch *Challenger) ChalBytes(chal line.Challenge) int {
-	var wc wireChal
-	if err := json.Unmarshal(chal, &wc); err != nil {
-		return len(chal)
-	}
-	n := 4 * len(wc.Indices)
-	for _, c := range wc.Coeffs {
-		n += len(c)
-	}
-	return n
+// ChalBytes returns the binary size of a compact seed challenge: 1+32+4+4 = 41 bytes.
+func (ch *Challenger) ChalBytes(_ line.Challenge) int {
+	return 41
 }
 
-func (ch *Challenger) Challenge(numBlocks int) (line.Challenge, line.Validator, error) {
-	// MakeChallenge only reads ps.l; no keypair needed.
-	ps := porsw.NewPubSchemeFromKey(nil, ch.s, ch.l)
-	chal, err := ps.MakeChallenge(numBlocks)
-	if err != nil {
-		return nil, nil, fmt.Errorf("swpub.Challenge: %w", err)
+func (ch *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, error) {
+	c := ch.l
+	if c > len(ids) {
+		c = len(ids)
 	}
-	coeffs := make([][]byte, len(chal.Coeffs))
-	for i, c := range chal.Coeffs {
-		coeffs[i] = bigToFixed32(c)
+	seed := make([]byte, 32)
+	if _, err := rand.Read(seed); err != nil {
+		return nil, nil, fmt.Errorf("swpub.Challenge: seed: %w", err)
 	}
-	b, err := json.Marshal(wireChal{Indices: chal.Indices, Coeffs: coeffs})
+	b, err := json.Marshal(wireChal{SuiteID: ch.suite.ID(), Seed: seed, C: c, N: len(ids)})
 	if err != nil {
 		return nil, nil, fmt.Errorf("swpub.Challenge: marshal: %w", err)
 	}
-	return line.Challenge(b), &Validator{pk: ch.pk, raw: chal}, nil
+	return line.Challenge(b), &Validator{pk: ch.pk}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -238,11 +240,16 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 	if err := json.Unmarshal(chal, &wc); err != nil {
 		return nil, fmt.Errorf("swpub.Prove: challenge: %w", err)
 	}
-	coeffs := make([]*big.Int, len(wc.Coeffs))
-	for i, c := range wc.Coeffs {
-		coeffs[i] = fixed32ToBig(c)
+	s, ok := suite.SuiteByID(wc.SuiteID)
+	if !ok {
+		return nil, fmt.Errorf("swpub.Prove: unknown suite %d", wc.SuiteID)
 	}
-	swChal := &porsw.SWChallenge{Kind: porsw.PubKind, Indices: wc.Indices, Coeffs: coeffs}
+	ids := make([][]byte, wc.N)
+	for i := range wc.N {
+		ids[i] = blocks.IntID(i)
+	}
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, bn256.Order)
+	swChal := &porsw.SWChallenge{Kind: porsw.PubKind, Indices: indices, Coeffs: coeffs}
 	// RespondFetch only reads ps.s from the scheme; no keypair needed.
 	resp, err := porsw.NewPubSchemeFromKey(nil, p.s, 0).RespondFetch(p.tags, swChal, store)
 	if err != nil {
@@ -264,12 +271,26 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 // ---------------------------------------------------------------------------
 
 // Validator implements line.Validator for the SW public-key scheme.
+// It is stateless: (seed, C, N) in the wire challenge are used to re-derive
+// the indices and coefficients at verify time per §3.3.
 type Validator struct {
-	pk  *porsw.PubPublicKey
-	raw *porsw.SWChallenge // bound to one challenge round
+	pk *porsw.PubPublicKey
 }
 
-func (v *Validator) Verify(_ line.Challenge, proof line.Proof) (bool, error) {
+func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) {
+	var wc wireChal
+	if err := json.Unmarshal(chal, &wc); err != nil {
+		return false, fmt.Errorf("swpub.Verify: challenge: %w", err)
+	}
+	s, ok := suite.SuiteByID(wc.SuiteID)
+	if !ok {
+		return false, fmt.Errorf("swpub.Verify: unknown suite %d", wc.SuiteID)
+	}
+	ids := make([][]byte, wc.N)
+	for i := range wc.N {
+		ids[i] = blocks.IntID(i)
+	}
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, bn256.Order)
 	var wp wireProof
 	if err := json.Unmarshal(proof, &wp); err != nil {
 		return false, fmt.Errorf("swpub.Verify: proof: %w", err)
@@ -278,6 +299,6 @@ func (v *Validator) Verify(_ line.Challenge, proof line.Proof) (bool, error) {
 	for j, m := range wp.Mu {
 		mu[j] = fixed32ToBig(m)
 	}
-	swProof := &porsw.SWProof{Sigma: wp.Sigma, Mu: mu}
-	return porsw.VerifyPub(v.pk, v.raw, swProof)
+	swChal := &porsw.SWChallenge{Kind: porsw.PubKind, Indices: indices, Coeffs: coeffs}
+	return porsw.VerifyPub(v.pk, swChal, &porsw.SWProof{Sigma: wp.Sigma, Mu: mu}, ids)
 }

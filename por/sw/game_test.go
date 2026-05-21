@@ -58,7 +58,7 @@ func TestSWChallengeGame(t *testing.T) {
 	}
 
 	for round := range 20 {
-		chal, err := MakeChallenge(len(file), params)
+		chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
@@ -102,7 +102,7 @@ func TestSWTamperedBlockFails(t *testing.T) {
 			rand.Read(g)
 			corruptBlocks[i] = g
 		}
-		chal, _ := MakeChallenge(len(file), params)
+		chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
 		proof, err := RespondFetch(params, tags, chal, blocks.NewMemStore(corruptBlocks))
 		if err != nil {
 			t.Fatalf("RespondFetch: %v", err)
@@ -138,7 +138,7 @@ func TestSWUnlimitedChallenges(t *testing.T) {
 	}
 
 	for round := range 100 {
-		chal, err := MakeChallenge(len(file), params)
+		chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
@@ -172,7 +172,7 @@ func TestSWRespondFetchEquivalent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chal, err := MakeChallenge(len(file), params)
+	chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestSWSmallFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chal, err := MakeChallenge(len(file), params)
+	chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
 	if err != nil {
 		t.Fatal(err)
 	}

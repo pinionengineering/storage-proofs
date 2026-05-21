@@ -213,7 +213,7 @@ func Build(s *suite.Suite, pk *pdp.PublicKey, store blocks.BlockStore) (*SkipLis
 	sl := &SkipList{levels: []*slNode{leftSent}}
 
 	for i := range store.Len() {
-		b, err := store.Block(i)
+		b, err := store.Block(blocks.IntID(i))
 		if err != nil {
 			return nil, nil, fmt.Errorf("erway.Build: block %d: %w", i, err)
 		}
@@ -283,7 +283,7 @@ func BuildWithHeights(s *suite.Suite, pk *pdp.PublicKey, store blocks.BlockStore
 	copy(sl.heights, heights)
 
 	for i := range n {
-		b, err := store.Block(i)
+		b, err := store.Block(blocks.IntID(i))
 		if err != nil {
 			return nil, nil, fmt.Errorf("erway.BuildWithHeights: block %d: %w", i, err)
 		}
@@ -745,7 +745,7 @@ func Prove(s *suite.Suite, pk *pdp.PublicKey, sl *SkipList, chal *Challenge, sto
 		}
 		bps[t] = BlockProof{Tag: tagBytes, Steps: steps}
 
-		block, err := store.Block(idx - 1) // erway uses 1-indexed positions; BlockStore is 0-indexed
+		block, err := store.Block(blocks.IntID(idx - 1)) // erway uses 1-indexed positions; BlockStore is 0-indexed
 		if err != nil {
 			return nil, fmt.Errorf("erway.Prove: block %d: %w", idx, err)
 		}

@@ -3,6 +3,7 @@
 package sw
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -19,8 +20,10 @@ import (
 // ---------------------------------------------------------------------------
 
 type wireChal struct {
-	Indices []int      `json:"indices"`
-	Coeffs  []*big.Int `json:"coeffs"`
+	SuiteID uint8  `json:"suite_id"`
+	Seed    []byte `json:"seed"`
+	C       int    `json:"c"`
+	N       int    `json:"n"`
 }
 
 type wireTag struct {
@@ -172,29 +175,25 @@ func (ch *Challenger) DetectionProbability(n int, corruptFraction float64) float
 	return confidence.HypergeometricDetection(n, ch.sk.Params.L, corruptFraction)
 }
 
-// ChalBytes returns the binary size of a challenge: C*(index+coeff).
-func (ch *Challenger) ChalBytes(chal line.Challenge) int {
-	var wc wireChal
-	if err := json.Unmarshal(chal, &wc); err != nil {
-		return len(chal)
-	}
-	n := 4 * len(wc.Indices)
-	for _, c := range wc.Coeffs {
-		n += len(c.Bytes())
-	}
-	return n
+// ChalBytes returns the binary size of a compact seed challenge: 1+32+4+4 = 41 bytes.
+func (ch *Challenger) ChalBytes(_ line.Challenge) int {
+	return 41
 }
 
-func (ch *Challenger) Challenge(numBlocks int) (line.Challenge, line.Validator, error) {
-	chal, err := porsw.MakeChallenge(numBlocks, ch.sk.Params)
-	if err != nil {
-		return nil, nil, fmt.Errorf("sw.Challenge: %w", err)
+func (ch *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, error) {
+	c := ch.sk.Params.L
+	if c > len(ids) {
+		c = len(ids)
 	}
-	b, err := json.Marshal(wireChal{Indices: chal.Indices, Coeffs: chal.Coeffs})
+	seed := make([]byte, 32)
+	if _, err := rand.Read(seed); err != nil {
+		return nil, nil, fmt.Errorf("sw.Challenge: seed: %w", err)
+	}
+	b, err := json.Marshal(wireChal{SuiteID: ch.s.ID(), Seed: seed, C: c, N: len(ids)})
 	if err != nil {
 		return nil, nil, fmt.Errorf("sw.Challenge: marshal: %w", err)
 	}
-	return line.Challenge(b), NewValidator(ch.sk, ch.s), nil
+	return line.Challenge(b), NewValidator(ch.sk), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -245,9 +244,18 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 	if err := json.Unmarshal(chal, &wc); err != nil {
 		return nil, fmt.Errorf("sw.Prove: challenge: %w", err)
 	}
+	s, ok := suite.SuiteByID(wc.SuiteID)
+	if !ok {
+		return nil, fmt.Errorf("sw.Prove: unknown suite %d", wc.SuiteID)
+	}
+	ids := make([][]byte, wc.N)
+	for i := range wc.N {
+		ids[i] = blocks.IntID(i)
+	}
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, p.params.P)
 
 	proof, err := porsw.RespondFetch(p.params, p.tags,
-		&porsw.Challenge{Indices: wc.Indices, Coeffs: wc.Coeffs},
+		&porsw.Challenge{Indices: indices, Coeffs: coeffs},
 		store,
 	)
 	if err != nil {
@@ -266,13 +274,14 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 // ---------------------------------------------------------------------------
 
 // Validator implements line.Validator for the SW private-key scheme.
+// It is stateless: (seed, C, N) in the wire challenge are used to re-derive
+// the indices and coefficients at verify time per §3.2.
 type Validator struct {
 	sk *porsw.SecretKey
-	s  *suite.Suite
 }
 
-func NewValidator(sk *porsw.SecretKey, s *suite.Suite) *Validator {
-	return &Validator{sk: sk, s: s}
+func NewValidator(sk *porsw.SecretKey) *Validator {
+	return &Validator{sk: sk}
 }
 
 func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) {
@@ -280,12 +289,21 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 	if err := json.Unmarshal(chal, &wc); err != nil {
 		return false, fmt.Errorf("sw.Verify: challenge: %w", err)
 	}
+	s, ok := suite.SuiteByID(wc.SuiteID)
+	if !ok {
+		return false, fmt.Errorf("sw.Verify: unknown suite %d", wc.SuiteID)
+	}
+	ids := make([][]byte, wc.N)
+	for i := range wc.N {
+		ids[i] = blocks.IntID(i)
+	}
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, v.sk.Params.P)
 	var wp wireProof
 	if err := json.Unmarshal(proof, &wp); err != nil {
 		return false, fmt.Errorf("sw.Verify: proof: %w", err)
 	}
-	return porsw.Verify(v.s, v.sk,
-		&porsw.Challenge{Indices: wc.Indices, Coeffs: wc.Coeffs},
+	return porsw.Verify(s, v.sk,
+		&porsw.Challenge{Indices: indices, Coeffs: coeffs},
 		&porsw.Proof{Sigma: wp.Sigma, Mu: wp.Mu},
 	)
 }

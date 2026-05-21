@@ -4,7 +4,6 @@ package ateniese
 
 import (
 	"crypto/rand"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -54,12 +53,10 @@ func decodeTag(b line.Tag) (*pdpateniese.Tag, error) {
 	return &pdpateniese.Tag{SuiteID: wt.SuiteID, T: wt.T, W: wt.W}, nil
 }
 
-// blockID returns the per-block identifier V ‖ big-endian(i), mirroring the
-// convention used in the ateniese game tests.
-func blockID(v []byte, i int) []byte {
-	var idx [8]byte
-	binary.BigEndian.PutUint64(idx[:], uint64(i))
-	return append(append([]byte(nil), v...), idx[:]...)
+// blockW returns the per-block W identifier V ‖ id. §4.3 requires distinct W_i
+// per block; binding to the block's own store ID achieves this naturally.
+func blockW(v, id []byte) []byte {
+	return append(append([]byte(nil), v...), id...)
 }
 
 // ---------------------------------------------------------------------------
@@ -80,15 +77,16 @@ func NewTagger(pk *pdp.PublicKey, sk *pdpateniese.SecretKey, s *suite.Suite) *Ta
 }
 
 func (t *Tagger) TagBlocks(store blocks.BlockStore) ([]line.Tag, error) {
-	n := store.Len()
+	ids := store.IDs()
+	n := len(ids)
 	tags := make([]line.Tag, n)
 	decoded := make([]*pdpateniese.Tag, n)
-	for i := range n {
-		block, err := store.Block(i)
+	for i, id := range ids {
+		block, err := store.Block(id)
 		if err != nil {
 			return nil, fmt.Errorf("ateniese.TagBlocks[%d]: %w", i, err)
 		}
-		w := blockID(t.sk.V, i)
+		w := blockW(t.sk.V, id)
 		tag, err := pdpateniese.TagBlock(t.s, t.pk, t.sk, block, w)
 		if err != nil {
 			return nil, fmt.Errorf("ateniese.TagBlocks[%d]: %w", i, err)
@@ -142,7 +140,8 @@ func (c *Challenger) DetectionProbability(n int, corruptFraction float64) float6
 
 // Challenge implements line.Challenger. The returned Validator is bound to
 // this round's secret s and must be used to verify the proof for this challenge.
-func (c *Challenger) Challenge(numBlocks int) (line.Challenge, line.Validator, error) {
+func (c *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, error) {
+	numBlocks := len(ids)
 	s, err := rand.Int(rand.Reader, c.pk.N)
 	if err != nil {
 		return nil, nil, fmt.Errorf("ateniese.Challenge: %w", err)

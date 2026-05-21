@@ -20,7 +20,9 @@ const (
 )
 
 // SWChallenge is the common challenge type for both SW scheme variants.
-// Coeffs are blinding scalars in Z_P (PrivKind) or Z_q/curve order (PubKind).
+// Indices are positions in store.IDs() ordering, corresponding to (i_t) in
+// the challenge (i_t, ν_t) of §3.2 (private) and §3.3 (public). Coeffs are
+// blinding scalars ν_t in Z_P (PrivKind) or Z_q/curve order (PubKind).
 type SWChallenge struct {
 	Kind    SchemeKind
 	Indices []int
@@ -45,16 +47,17 @@ type Scheme interface {
 	// in the Scheme instance.
 	TagBlocks(store blocks.BlockStore) ([][]byte, error)
 
-	// MakeChallenge returns a fresh random challenge for n blocks.
+	// MakeChallenge returns a fresh random challenge for the given block IDs.
 	// For PubKind, any holder of the public key can call this.
-	MakeChallenge(n int) (*SWChallenge, error)
+	MakeChallenge(ids [][]byte) (*SWChallenge, error)
 
 	// RespondFetch computes a proof by fetching the challenged blocks on demand.
 	// Called by the server; requires only the serialized tags and a block store.
 	RespondFetch(tags [][]byte, chal *SWChallenge, store blocks.BlockStore) (*SWProof, error)
 
-	// Verify checks the server's proof against a challenge.
-	// For PrivKind the embedded secret key is used; for PubKind only the
-	// embedded public key is required.
-	Verify(chal *SWChallenge, proof *SWProof) (bool, error)
+	// Verify checks the server's proof against a challenge. ids is the ordered
+	// identifier list from store.IDs() at audit time; it is used by PubKind to
+	// reconstruct H(λ‖id_t) per §3.3 and ignored by PrivKind (§3.2 uses only
+	// integer positions for the PRF).
+	Verify(chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error)
 }

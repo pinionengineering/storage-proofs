@@ -4,20 +4,45 @@
 package blocks
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
 )
 
-// BlockStore provides indexed read/write access to a sequence of blocks.
-// Blocks are 0-indexed. The last block may be shorter than the rest.
+// BlockStore provides keyed read/write access to a sequence of blocks.
+// IDs()[i] is the identifier for block i; len(IDs()) == Len().
 type BlockStore interface {
 	// Len returns the number of blocks.
 	Len() int
-	// Block returns the bytes of block i.
-	Block(i int) ([]byte, error)
-	// SetBlock writes data as block i, growing the store if needed.
-	SetBlock(i int, data []byte) error
+	// IDs returns the identifier for each block, in order.
+	IDs() [][]byte
+	// Block returns the bytes of the block with the given id.
+	Block(id []byte) ([]byte, error)
+	// SetBlock writes data as the block with the given id, growing the store if needed.
+	SetBlock(id []byte, data []byte) error
+}
+
+// IntID encodes an integer index as a big-endian uint64 byte slice.
+func IntID(i int) []byte {
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], uint64(i))
+	return buf[:]
+}
+
+// IDInt decodes the last 8 bytes of id as a big-endian uint64 integer index.
+func IDInt(id []byte) int {
+	if len(id) < 8 {
+		return 0
+	}
+	return int(binary.BigEndian.Uint64(id[len(id)-8:]))
+}
+
+// BlockAt returns the bytes of the block at position idx in store.IDs().
+// This encodes the canonical contract between IDs() and Block(): to fetch
+// block i, look up its identifier via IDs()[i] and pass it to Block.
+func BlockAt(store BlockStore, idx int) ([]byte, error) {
+	return store.Block(store.IDs()[idx])
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +104,16 @@ func (s *FileStore) Close() error { return s.f.Close() }
 
 func (s *FileStore) Len() int { return s.n }
 
-func (s *FileStore) Block(i int) ([]byte, error) {
+func (s *FileStore) IDs() [][]byte {
+	ids := make([][]byte, s.n)
+	for i := range s.n {
+		ids[i] = IntID(i)
+	}
+	return ids
+}
+
+func (s *FileStore) Block(id []byte) ([]byte, error) {
+	i := IDInt(id)
 	if i < 0 || i >= s.n {
 		return nil, fmt.Errorf("blocks: index %d out of range [0, %d)", i, s.n)
 	}
@@ -94,7 +128,8 @@ func (s *FileStore) Block(i int) ([]byte, error) {
 	return buf[:n], nil
 }
 
-func (s *FileStore) SetBlock(i int, data []byte) error {
+func (s *FileStore) SetBlock(id []byte, data []byte) error {
+	i := IDInt(id)
 	if i < 0 {
 		return fmt.Errorf("blocks: negative index %d", i)
 	}
@@ -126,14 +161,24 @@ func NewMemStore(blocks [][]byte) *MemStore {
 
 func (s *MemStore) Len() int { return len(s.blocks) }
 
-func (s *MemStore) Block(i int) ([]byte, error) {
+func (s *MemStore) IDs() [][]byte {
+	ids := make([][]byte, len(s.blocks))
+	for i := range s.blocks {
+		ids[i] = IntID(i)
+	}
+	return ids
+}
+
+func (s *MemStore) Block(id []byte) ([]byte, error) {
+	i := IDInt(id)
 	if i < 0 || i >= len(s.blocks) {
 		return nil, fmt.Errorf("blocks: index %d out of range [0, %d)", i, len(s.blocks))
 	}
 	return s.blocks[i], nil
 }
 
-func (s *MemStore) SetBlock(i int, data []byte) error {
+func (s *MemStore) SetBlock(id []byte, data []byte) error {
+	i := IDInt(id)
 	if i < 0 {
 		return fmt.Errorf("blocks: negative index %d", i)
 	}

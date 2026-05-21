@@ -791,7 +791,7 @@ func Encode(s *suite.Suite, mk *MasterKey, store blocks.BlockStore) (*EncodedFil
 	n := store.Len()
 	file := make([][]byte, n)
 	for i := range n {
-		b, err := store.Block(i)
+		b, err := store.Block(blocks.IntID(i))
 		if err != nil {
 			return nil, fmt.Errorf("por.Encode: block %d: %w", i, err)
 		}
@@ -877,7 +877,7 @@ func RespondFetch(s *suite.Suite, p *Params, sentinels [][]byte, chal *Challenge
 	P := p.P
 	M := big.NewInt(0)
 	for pos, idx := range indices {
-		data, err := store.Block(idx)
+		data, err := store.Block(blocks.IntID(idx))
 		if err != nil {
 			return nil, fmt.Errorf("por.RespondFetch: block %d: %w", idx, err)
 		}

@@ -121,7 +121,7 @@ func main() {
 		kind = "POR"
 		ps, err := porsw.NewPubScheme(4, *challenged)
 		must(err)
-		tagger = lineSwPub.NewTagger(ps)
+		tagger = lineSwPub.NewTagger(ps, s)
 		_, err = tagger.TagBlocks(store)
 		must(err)
 
@@ -161,7 +161,7 @@ func main() {
 
 	for i := range *rounds {
 		t0 := time.Now()
-		chal, v, err := challenger.Challenge(nEncoded)
+		chal, v, err := challenger.Challenge(encoded.IDs())
 		must(err)
 
 		proof, err := requestProof(*server, chal)
@@ -218,7 +218,7 @@ func post(url, contentType string, body io.Reader) error {
 func flattenStore(store blocks.BlockStore) []byte {
 	var out []byte
 	for i := range store.Len() {
-		b, err := store.Block(i)
+		b, err := blocks.BlockAt(store, i)
 		if err != nil {
 			log.Fatalf("flattenStore: block %d: %v", i, err)
 		}

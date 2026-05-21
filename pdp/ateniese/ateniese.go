@@ -216,7 +216,7 @@ func KeyGen(k int) (pk *pdp.PublicKey, sk *SecretKey, err error) {
 // w is the full block identifier stored in the returned Tag.W field. The caller
 // is responsible for constructing w — a typical choice is V || encode(index),
 // which binds the tag to both the key pair (via V) and the block's position.
-// Other schemes (e.g. V || CID bytes for a content-addressed DAG) are equally
+// Other schemes (e.g. V || IDentifier) are equally
 // valid as long as w is unique within the key pair's scope.
 //
 // The algorithm (§4.3 / Fig. 2, TagBlock):
@@ -225,7 +225,7 @@ func KeyGen(k int) (pk *pdp.PublicKey, sk *SecretKey, err error) {
 //
 // Interface note: the paper's TagBlock(pk, sk, m, i) computes W_i = v||i
 // internally. Here the caller pre-computes w so that non-index identifiers
-// (e.g. CID bytes for a content-addressed DAG) are also supported. The standard
+// (e.g. ID bytes) are also supported. The standard
 // W_i = V||encode(i) construction for sequential file blocks is shown in the tests.
 //
 // Deviation from the paper: m is SHA-256 hashed before being used as a group
@@ -293,7 +293,7 @@ func GenProof(s *suite.Suite, pk *pdp.PublicKey, store blocks.BlockStore, chal *
 		T.Mod(T, pk.N)
 
 		// §4.3 Fig. 2, GenProof step 3: accumulate μ = Σ a_j · m_{i_j}.
-		block, err := store.Block(ij)
+		block, err := store.Block(blocks.IntID(ij))
 		if err != nil {
 			return nil, fmt.Errorf("ateniese.GenProof: block %d: %w", ij, err)
 		}

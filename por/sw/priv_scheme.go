@@ -41,8 +41,9 @@ func (ps *PrivScheme) TagBlocks(store blocks.BlockStore) ([][]byte, error) {
 }
 
 // MakeChallenge generates a fresh challenge with coefficients in Z_P.
-func (ps *PrivScheme) MakeChallenge(n int) (*SWChallenge, error) {
-	c, err := MakeChallenge(n, ps.sk.Params)
+// ids is store.IDs() from the store being audited; len(ids) is used as n (§3.2).
+func (ps *PrivScheme) MakeChallenge(ids [][]byte) (*SWChallenge, error) {
+	c, err := MakeChallenge(ids, ps.sk.Params)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +65,9 @@ func (ps *PrivScheme) RespondFetch(tags [][]byte, chal *SWChallenge, store block
 }
 
 // Verify reconstructs sigma from the secret key and compares it to the proof.
-func (ps *PrivScheme) Verify(chal *SWChallenge, proof *SWProof) (bool, error) {
+// ids is unused for the private-key scheme; §3.2 verification uses only the
+// integer positions in chal.Indices as PRF inputs.
+func (ps *PrivScheme) Verify(chal *SWChallenge, proof *SWProof, _ [][]byte) (bool, error) {
 	c := &Challenge{Indices: chal.Indices, Coeffs: chal.Coeffs}
 	p := &Proof{Sigma: new(big.Int).SetBytes(proof.Sigma), Mu: proof.Mu}
 	return Verify(ps.suite, ps.sk, c, p)

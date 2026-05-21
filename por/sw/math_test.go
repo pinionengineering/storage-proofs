@@ -178,7 +178,7 @@ func TestVerificationEquation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chal, err := MakeChallenge(len(file), params)
+	chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestVerificationEquationTamperedMu(t *testing.T) {
 	}
 	tags, _ := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
-	chal, _ := MakeChallenge(len(file), params)
+	chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
 	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
 
 	// Flip one μ value.
@@ -266,7 +266,7 @@ func TestVerificationEquationTamperedSigma(t *testing.T) {
 	}
 	tags, _ := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
-	chal, _ := MakeChallenge(len(file), params)
+	chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
 	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
 
 	proof.Sigma.Add(proof.Sigma, big.NewInt(1))
@@ -290,7 +290,7 @@ func TestMakeChallengeDistinctIndices(t *testing.T) {
 	params := &Params{S: 2, L: 10, P: P}
 
 	for range 50 {
-		chal, err := MakeChallenge(20, params)
+		chal, err := MakeChallenge(blocks.NewMemStore(make([][]byte, 20)).IDs(), params)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -311,7 +311,7 @@ func TestMakeChallengeIndicesInRange(t *testing.T) {
 	n := 15
 
 	for range 30 {
-		chal, err := MakeChallenge(n, params)
+		chal, err := MakeChallenge(blocks.NewMemStore(make([][]byte, n)).IDs(), params)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -331,7 +331,7 @@ func TestMakeChallengeCoeffsInZP(t *testing.T) {
 	P := testP
 	params := &Params{S: 2, L: 8, P: P}
 
-	chal, err := MakeChallenge(20, params)
+	chal, err := MakeChallenge(blocks.NewMemStore(make([][]byte, 20)).IDs(), params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,8 +348,8 @@ func TestMakeChallengeNonDeterministic(t *testing.T) {
 	P := testP
 	params := &Params{S: 2, L: 5, P: P}
 
-	c1, _ := MakeChallenge(20, params)
-	c2, _ := MakeChallenge(20, params)
+	c1, _ := MakeChallenge(blocks.NewMemStore(make([][]byte, 20)).IDs(), params)
+	c2, _ := MakeChallenge(blocks.NewMemStore(make([][]byte, 20)).IDs(), params)
 
 	same := true
 	for i := range len(c1.Indices) {
@@ -389,7 +389,7 @@ func TestProofSigmaLinearity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chal, err := MakeChallenge(len(file), params)
+	chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestProofMuLinearity(t *testing.T) {
 	}
 	tags, _ := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
-	chal, _ := MakeChallenge(len(file), params)
+	chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
 	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
 
 	idx := chal.Indices[0]

@@ -153,7 +153,7 @@ func swPubSetup(store blocks.BlockStore) (line.Challenger, line.Prover, blocks.B
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	tagger := lineSwPub.NewTagger(ps)
+	tagger := lineSwPub.NewTagger(ps, suite.SuiteV1)
 	if _, err = tagger.TagBlocks(store); err != nil {
 		return nil, nil, nil, err
 	}
@@ -203,7 +203,7 @@ func TestAdapterRoundTrip(t *testing.T) {
 			}
 
 			// Honest round: proof must verify.
-			chal, v, err := ch.Challenge(encoded.Len())
+			chal, v, err := ch.Challenge(encoded.IDs())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -222,7 +222,7 @@ func TestAdapterRoundTrip(t *testing.T) {
 			// Corrupt encoded block 0 and re-challenge.
 			encBlocks := make([][]byte, encoded.Len())
 			for i := range encBlocks {
-				b, err := encoded.Block(i)
+				b, err := blocks.BlockAt(encoded, i)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -232,7 +232,7 @@ func TestAdapterRoundTrip(t *testing.T) {
 			rand.Read(encBlocks[0]) //nolint:errcheck
 			corruptStore := blocks.NewMemStore(encBlocks)
 
-			chal2, v2, err := ch.Challenge(encoded.Len())
+			chal2, v2, err := ch.Challenge(encoded.IDs())
 			if err != nil {
 				t.Fatal(err)
 			}

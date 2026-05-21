@@ -7,6 +7,7 @@ import (
 	"github.com/pinionengineering/storage-proofs/blocks"
 	swpub "github.com/pinionengineering/storage-proofs/line/swpub"
 	porsw "github.com/pinionengineering/storage-proofs/por/sw"
+	"github.com/pinionengineering/storage-proofs/suite"
 )
 
 func TestRoundTrip(t *testing.T) {
@@ -30,7 +31,7 @@ func TestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tagger := swpub.NewTagger(ps)
+	tagger := swpub.NewTagger(ps, suite.SuiteV1)
 	if _, err = tagger.TagBlocks(store); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func TestRoundTrip(t *testing.T) {
 	}
 
 	// Audit round.
-	chal, validator, err := challenger.Challenge(n)
+	chal, validator, err := challenger.Challenge(tagger.EncodedBlocks().IDs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestRoundTrip(t *testing.T) {
 	rand.Read(corrupt[0]) //nolint:errcheck
 	corruptStore := blocks.NewMemStore(corrupt)
 
-	chal2, v2, err := challenger.Challenge(n)
+	chal2, v2, err := challenger.Challenge(blocks.NewMemStore(raw).IDs())
 	if err != nil {
 		t.Fatal(err)
 	}

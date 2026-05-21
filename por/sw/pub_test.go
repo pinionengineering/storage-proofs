@@ -30,7 +30,9 @@ func TestPubChallengeGame(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 20, 32)
 
-	tags, err := ps.TagBlocks(blocks.NewMemStore(file))
+	store := blocks.NewMemStore(file)
+	ids := store.IDs()
+	tags, err := ps.TagBlocks(store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,15 +41,15 @@ func TestPubChallengeGame(t *testing.T) {
 	}
 
 	for round := range 10 {
-		chal, err := ps.MakeChallenge(len(file))
+		chal, err := ps.MakeChallenge(ids)
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
-		proof, err := ps.RespondFetch(tags, chal, blocks.NewMemStore(file))
+		proof, err := ps.RespondFetch(tags, chal, store)
 		if err != nil {
 			t.Fatalf("RespondFetch(round=%d): %v", round, err)
 		}
-		ok, err := ps.Verify(chal, proof)
+		ok, err := ps.Verify(chal, proof, ids)
 		if err != nil {
 			t.Fatalf("Verify(round=%d): %v", round, err)
 		}
@@ -65,12 +67,14 @@ func TestVerifyPub(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 15, 32)
 
-	tags, _ := ps.TagBlocks(blocks.NewMemStore(file))
-	chal, _ := ps.MakeChallenge(len(file))
-	proof, _ := ps.RespondFetch(tags, chal, blocks.NewMemStore(file))
+	store := blocks.NewMemStore(file)
+	ids := store.IDs()
+	tags, _ := ps.TagBlocks(store)
+	chal, _ := ps.MakeChallenge(ids)
+	proof, _ := ps.RespondFetch(tags, chal, store)
 
 	pk := ps.PubKey()
-	ok, err := VerifyPub(pk, chal, proof)
+	ok, err := VerifyPub(pk, chal, proof, ids)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,14 +89,16 @@ func TestVerifyPubTamperedMu(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 15, 32)
 
-	tags, _ := ps.TagBlocks(blocks.NewMemStore(file))
-	chal, _ := ps.MakeChallenge(len(file))
-	proof, _ := ps.RespondFetch(tags, chal, blocks.NewMemStore(file))
+	store := blocks.NewMemStore(file)
+	ids := store.IDs()
+	tags, _ := ps.TagBlocks(store)
+	chal, _ := ps.MakeChallenge(ids)
+	proof, _ := ps.RespondFetch(tags, chal, store)
 
 	proof.Mu[0].Add(proof.Mu[0], big.NewInt(1))
 	proof.Mu[0].Mod(proof.Mu[0], bn256.Order)
 
-	ok, err := VerifyPub(ps.PubKey(), chal, proof)
+	ok, err := VerifyPub(ps.PubKey(), chal, proof, ids)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,14 +113,16 @@ func TestVerifyPubTamperedSigma(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 15, 32)
 
-	tags, _ := ps.TagBlocks(blocks.NewMemStore(file))
-	chal, _ := ps.MakeChallenge(len(file))
-	proof, _ := ps.RespondFetch(tags, chal, blocks.NewMemStore(file))
+	store := blocks.NewMemStore(file)
+	ids := store.IDs()
+	tags, _ := ps.TagBlocks(store)
+	chal, _ := ps.MakeChallenge(ids)
+	proof, _ := ps.RespondFetch(tags, chal, store)
 
 	// Flip a byte in sigma — the result is (almost certainly) an invalid G₁
 	// point, so Unmarshal will error. Verify must not accept it.
 	proof.Sigma[3] ^= 0xff
-	ok, err := VerifyPub(ps.PubKey(), chal, proof)
+	ok, err := VerifyPub(ps.PubKey(), chal, proof, ids)
 	// Either Unmarshal errors or the pairing check fails — both are acceptable.
 	if err == nil && ok {
 		t.Fatal("VerifyPub accepted a proof with tampered sigma")
@@ -128,7 +136,9 @@ func TestVerifyPubTamperedSigma(t *testing.T) {
 func TestPubTamperedBlockFails(t *testing.T) {
 	ps := pubScheme(t)
 	file := randomFile(t, 20, 32)
-	tags, _ := ps.TagBlocks(blocks.NewMemStore(file))
+	store := blocks.NewMemStore(file)
+	ids := store.IDs()
+	tags, _ := ps.TagBlocks(store)
 
 	anyFailed := false
 	for range 10 {
@@ -138,12 +148,12 @@ func TestPubTamperedBlockFails(t *testing.T) {
 			rand.Read(g)
 			corruptBlocks[i] = g
 		}
-		chal, _ := ps.MakeChallenge(len(file))
+		chal, _ := ps.MakeChallenge(ids)
 		proof, err := ps.RespondFetch(tags, chal, blocks.NewMemStore(corruptBlocks))
 		if err != nil {
 			t.Fatalf("RespondFetch: %v", err)
 		}
-		ok, err := ps.Verify(chal, proof)
+		ok, err := ps.Verify(chal, proof, ids)
 		if err != nil {
 			t.Fatalf("Verify: %v", err)
 		}
@@ -170,8 +180,9 @@ func runScheme(t *testing.T, scheme Scheme, nBlocks, blockSize, nRounds int) {
 		t.Fatalf("TagBlocks: %v", err)
 	}
 
+	ids := store.IDs()
 	for round := range nRounds {
-		chal, err := scheme.MakeChallenge(len(file))
+		chal, err := scheme.MakeChallenge(ids)
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
@@ -179,7 +190,7 @@ func runScheme(t *testing.T, scheme Scheme, nBlocks, blockSize, nRounds int) {
 		if err != nil {
 			t.Fatalf("RespondFetch(round=%d): %v", round, err)
 		}
-		ok, err := scheme.Verify(chal, proof)
+		ok, err := scheme.Verify(chal, proof, ids)
 		if err != nil {
 			t.Fatalf("Verify(round=%d): %v", round, err)
 		}
@@ -230,9 +241,11 @@ func TestPubSmallFile(t *testing.T) {
 	}
 
 	file := randomFile(t, 3, 32)
-	tags, _ := ps.TagBlocks(blocks.NewMemStore(file))
+	store := blocks.NewMemStore(file)
+	ids := store.IDs()
+	tags, _ := ps.TagBlocks(store)
 
-	chal, err := ps.MakeChallenge(len(file))
+	chal, err := ps.MakeChallenge(ids)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,11 +253,11 @@ func TestPubSmallFile(t *testing.T) {
 		t.Fatalf("expected 3 challenge indices (clamped to n), got %d", len(chal.Indices))
 	}
 
-	proof, err := ps.RespondFetch(tags, chal, blocks.NewMemStore(file))
+	proof, err := ps.RespondFetch(tags, chal, store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ok, err := ps.Verify(chal, proof)
+	ok, err := ps.Verify(chal, proof, ids)
 	if err != nil {
 		t.Fatal(err)
 	}

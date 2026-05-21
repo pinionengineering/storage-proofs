@@ -6,6 +6,7 @@
 package erway
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -23,10 +24,10 @@ import (
 // ---------------------------------------------------------------------------
 
 type wireChal struct {
-	SuiteID uint8      `json:"suite_id"`
-	Indices []int      `json:"indices"`
-	Coeffs  []*big.Int `json:"coeffs"`
-	N       int        `json:"n"`
+	SuiteID uint8  `json:"suite_id"`
+	Seed    []byte `json:"seed"`
+	C       int    `json:"c"`
+	N       int    `json:"n"`
 }
 
 type wireProofStep struct {
@@ -127,7 +128,7 @@ func (t *Tagger) TagBlocks(store blocks.BlockStore) ([]line.Tag, error) {
 	n := store.Len()
 	tags := make([]line.Tag, n)
 	for i := range n {
-		block, err := store.Block(i)
+		block, err := store.Block(blocks.IntID(i))
 		if err != nil {
 			return nil, fmt.Errorf("erway.TagBlocks[%d]: %w", i, err)
 		}
@@ -234,14 +235,14 @@ func (f proverFactory) NewProver(setup []byte, store blocks.BlockStore) (line.Pr
 
 // Challenger implements line.Challenger for the DPDP I scheme.
 type Challenger struct {
-	suiteID uint8
-	c       int // blocks per challenge
-	pk      *pdp.PublicKey
-	basis   pdperway.Basis
+	s     *suite.Suite
+	c     int // blocks per challenge
+	pk    *pdp.PublicKey
+	basis pdperway.Basis
 }
 
 func NewChallenger(s *suite.Suite, c int, pk *pdp.PublicKey, basis []byte) *Challenger {
-	return &Challenger{suiteID: s.ID(), c: c, pk: pk, basis: pdperway.Basis(basis)}
+	return &Challenger{s: s, c: c, pk: pk, basis: pdperway.Basis(basis)}
 }
 
 // DetectionProbability returns the probability that a single challenge catches
@@ -250,39 +251,26 @@ func (ch *Challenger) DetectionProbability(n int, corruptFraction float64) float
 	return confidence.HypergeometricDetection(n, ch.c, corruptFraction)
 }
 
-func (ch *Challenger) Challenge(numBlocks int) (line.Challenge, line.Validator, error) {
-	count := ch.c
-	if count > numBlocks {
-		count = numBlocks
+func (ch *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, error) {
+	n := len(ids)
+	c := ch.c
+	if c > n {
+		c = n
 	}
-	chal, err := pdperway.MakeChallenge(numBlocks, count)
-	if err != nil {
-		return nil, nil, fmt.Errorf("erway.Challenge: %w", err)
+	seed := make([]byte, 32)
+	if _, err := rand.Read(seed); err != nil {
+		return nil, nil, fmt.Errorf("erway.Challenge: seed: %w", err)
 	}
-	b, err := json.Marshal(wireChal{
-		SuiteID: ch.suiteID,
-		Indices: chal.Indices,
-		Coeffs:  chal.Coeffs,
-		N:       chal.N,
-	})
+	b, err := json.Marshal(wireChal{SuiteID: ch.s.ID(), Seed: seed, C: c, N: n})
 	if err != nil {
 		return nil, nil, fmt.Errorf("erway.Challenge: marshal: %w", err)
 	}
 	return line.Challenge(b), NewValidator(ch.pk, ch.basis), nil
 }
 
-// ChalBytes returns the binary size of a challenge: header plus C*(index+coeff).
-func (ch *Challenger) ChalBytes(chal line.Challenge) int {
-	var wc wireChal
-	if err := json.Unmarshal(chal, &wc); err != nil {
-		return len(chal)
-	}
-	// SuiteID(1) + N(4) + C×index(4)
-	n := 5 + 4*len(wc.Indices)
-	for _, c := range wc.Coeffs {
-		n += len(c.Bytes())
-	}
-	return n
+// ChalBytes returns the binary size of a compact seed challenge: 1+32+4+4 = 41 bytes.
+func (ch *Challenger) ChalBytes(_ line.Challenge) int {
+	return 41
 }
 
 // ---------------------------------------------------------------------------
@@ -330,20 +318,28 @@ func (p *Prover) ProofBytes(proof line.Proof) int {
 }
 
 // Prove implements line.Prover. store is 0-indexed; erway uses 1-indexed
-// internally, so pdperway.Prove handles the translation via store.Block(idx-1).
+// positions internally (§4.1), so derived 0-indexed positions are offset by +1.
 func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof, error) {
 	var wc wireChal
 	if err := json.Unmarshal(chal, &wc); err != nil {
 		return nil, fmt.Errorf("erway.Prove: challenge: %w", err)
 	}
-
 	s, ok := suite.SuiteByID(wc.SuiteID)
 	if !ok {
 		return nil, fmt.Errorf("erway.Prove: unknown suite %d", wc.SuiteID)
 	}
-
+	ids := make([][]byte, wc.N)
+	for i := range wc.N {
+		ids[i] = blocks.IntID(i)
+	}
+	mod128 := new(big.Int).Lsh(big.NewInt(1), 128)
+	indices0, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, mod128)
+	indices1 := make([]int, len(indices0))
+	for i, idx := range indices0 {
+		indices1[i] = idx + 1 // convert to 1-indexed block positions (§4.1)
+	}
 	proof, err := pdperway.Prove(s, p.pk, p.sl,
-		&pdperway.Challenge{Indices: wc.Indices, Coeffs: wc.Coeffs, N: wc.N},
+		&pdperway.Challenge{Indices: indices1, Coeffs: coeffs, N: wc.N},
 		store,
 	)
 	if err != nil {
@@ -373,13 +369,27 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 	if err := json.Unmarshal(chal, &wc); err != nil {
 		return false, fmt.Errorf("erway.Verify: challenge: %w", err)
 	}
+	s, ok := suite.SuiteByID(wc.SuiteID)
+	if !ok {
+		return false, fmt.Errorf("erway.Verify: unknown suite %d", wc.SuiteID)
+	}
+	ids := make([][]byte, wc.N)
+	for i := range wc.N {
+		ids[i] = blocks.IntID(i)
+	}
+	mod128 := new(big.Int).Lsh(big.NewInt(1), 128)
+	indices0, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, mod128)
+	indices1 := make([]int, len(indices0))
+	for i, idx := range indices0 {
+		indices1[i] = idx + 1 // convert to 1-indexed block positions (§4.1)
+	}
 	p, err := decodeProof(proof)
 	if err != nil {
 		return false, fmt.Errorf("erway.Verify: proof: %w", err)
 	}
 	return pdperway.VerifyProof(v.pk,
 		v.basis,
-		&pdperway.Challenge{Indices: wc.Indices, Coeffs: wc.Coeffs, N: wc.N},
+		&pdperway.Challenge{Indices: indices1, Coeffs: coeffs, N: wc.N},
 		p,
 	)
 }

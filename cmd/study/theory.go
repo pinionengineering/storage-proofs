@@ -107,15 +107,14 @@ func challengeBytesFormula(scheme string, C, keyBits, swPLen int) int {
 		// Gs is an element of Z_N where N=p·q, each prime keyBits bits → N is 2*keyBits bits.
 		return 2*keyBits/8 + 41
 	case "Erway":
-		// Linear: SuiteID(1) + N(4) + C × (index(4) + coeff(16))
-		// Coeffs are 128-bit PRF outputs → up to 16 bytes each.
-		return 5 + C*(4+16)
+		// Constant: SuiteID(1) + Seed(32) + C(4) + N(4) = 41 bytes (seed-based compact challenge)
+		return 41
 	case "SW-Priv":
-		// Linear: C × (index(4) + coeff(swPLen))
-		return C * (4 + swPLen)
+		// Constant: SuiteID(1) + Seed(32) + C(4) + N(4) = 41 bytes (seed-based compact challenge)
+		return 41
 	case "SW-Pub":
-		// Linear: C × (index(4) + Fr-scalar(32))
-		return C * (4 + 32)
+		// Constant: SuiteID(1) + Seed(32) + C(4) + N(4) = 41 bytes (seed-based compact challenge)
+		return 41
 	case "BJO":
 		// Constant: J(4) + Kjc(32) + U(4)
 		return 4 + 32 + 4
