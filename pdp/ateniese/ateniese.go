@@ -293,7 +293,7 @@ func GenProof(s *suite.Suite, pk *pdp.PublicKey, store blocks.BlockStore, chal *
 		T.Mod(T, pk.N)
 
 		// §4.3 Fig. 2, GenProof step 3: accumulate μ = Σ a_j · m_{i_j}.
-		block, err := store.Block(blocks.IntID(ij))
+		block, err := blocks.BlockAt(store, ij)
 		if err != nil {
 			return nil, fmt.Errorf("ateniese.GenProof: block %d: %w", ij, err)
 		}
