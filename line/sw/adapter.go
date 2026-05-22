@@ -193,7 +193,9 @@ func (ch *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, e
 	if err != nil {
 		return nil, nil, fmt.Errorf("sw.Challenge: marshal: %w", err)
 	}
-	return line.Challenge(b), NewValidator(ch.sk), nil
+	idsCopy := make([][]byte, len(ids))
+	copy(idsCopy, ids)
+	return line.Challenge(b), NewValidator(ch.sk, idsCopy), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -248,10 +250,7 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 	if !ok {
 		return nil, fmt.Errorf("sw.Prove: unknown suite %d", wc.SuiteID)
 	}
-	ids := make([][]byte, wc.N)
-	for i := range wc.N {
-		ids[i] = blocks.IntID(i)
-	}
+	ids := store.IDs()
 	indices, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, p.params.P)
 
 	proof, err := porsw.RespondFetch(p.params, p.tags,
@@ -274,14 +273,15 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 // ---------------------------------------------------------------------------
 
 // Validator implements line.Validator for the SW private-key scheme.
-// It is stateless: (seed, C, N) in the wire challenge are used to re-derive
-// the indices and coefficients at verify time per §3.2.
+// ids are the block identifiers from the store at challenge time, used to
+// re-derive the same indices and coefficients as the prover per §3.2.
 type Validator struct {
-	sk *porsw.SecretKey
+	sk  *porsw.SecretKey
+	ids [][]byte
 }
 
-func NewValidator(sk *porsw.SecretKey) *Validator {
-	return &Validator{sk: sk}
+func NewValidator(sk *porsw.SecretKey, ids [][]byte) *Validator {
+	return &Validator{sk: sk, ids: ids}
 }
 
 func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) {
@@ -293,16 +293,12 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 	if !ok {
 		return false, fmt.Errorf("sw.Verify: unknown suite %d", wc.SuiteID)
 	}
-	ids := make([][]byte, wc.N)
-	for i := range wc.N {
-		ids[i] = blocks.IntID(i)
-	}
-	indices, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, v.sk.Params.P)
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, v.ids, wc.C, v.sk.Params.P)
 	var wp wireProof
 	if err := json.Unmarshal(proof, &wp); err != nil {
 		return false, fmt.Errorf("sw.Verify: proof: %w", err)
 	}
-	return porsw.Verify(s, v.sk, ids,
+	return porsw.Verify(s, v.sk, v.ids,
 		&porsw.Challenge{Indices: indices, Coeffs: coeffs},
 		&porsw.Proof{Sigma: wp.Sigma, Mu: wp.Mu},
 	)

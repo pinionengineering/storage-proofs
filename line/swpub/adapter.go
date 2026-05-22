@@ -207,7 +207,9 @@ func (ch *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, e
 	if err != nil {
 		return nil, nil, fmt.Errorf("swpub.Challenge: marshal: %w", err)
 	}
-	return line.Challenge(b), &Validator{pk: ch.pk}, nil
+	idsCopy := make([][]byte, len(ids))
+	copy(idsCopy, ids)
+	return line.Challenge(b), &Validator{pk: ch.pk, ids: idsCopy}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -244,11 +246,7 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 	if !ok {
 		return nil, fmt.Errorf("swpub.Prove: unknown suite %d", wc.SuiteID)
 	}
-	ids := make([][]byte, wc.N)
-	for i := range wc.N {
-		ids[i] = blocks.IntID(i)
-	}
-	indices, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, bn256.Order)
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, store.IDs(), wc.C, bn256.Order)
 	swChal := &porsw.SWChallenge{Kind: porsw.PubKind, Indices: indices, Coeffs: coeffs}
 	// RespondFetch only reads ps.s from the scheme; no keypair needed.
 	resp, err := porsw.NewPubSchemeFromKey(nil, p.s, 0).RespondFetch(p.tags, swChal, store)
@@ -271,10 +269,11 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 // ---------------------------------------------------------------------------
 
 // Validator implements line.Validator for the SW public-key scheme.
-// It is stateless: (seed, C, N) in the wire challenge are used to re-derive
-// the indices and coefficients at verify time per §3.3.
+// ids are the block identifiers from the store at challenge time, used to
+// re-derive the same indices and coefficients as the prover per §3.3.
 type Validator struct {
-	pk *porsw.PubPublicKey
+	pk  *porsw.PubPublicKey
+	ids [][]byte
 }
 
 func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) {
@@ -286,11 +285,7 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 	if !ok {
 		return false, fmt.Errorf("swpub.Verify: unknown suite %d", wc.SuiteID)
 	}
-	ids := make([][]byte, wc.N)
-	for i := range wc.N {
-		ids[i] = blocks.IntID(i)
-	}
-	indices, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, bn256.Order)
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, v.ids, wc.C, bn256.Order)
 	var wp wireProof
 	if err := json.Unmarshal(proof, &wp); err != nil {
 		return false, fmt.Errorf("swpub.Verify: proof: %w", err)
@@ -300,5 +295,5 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 		mu[j] = fixed32ToBig(m)
 	}
 	swChal := &porsw.SWChallenge{Kind: porsw.PubKind, Indices: indices, Coeffs: coeffs}
-	return porsw.VerifyPub(v.pk, swChal, &porsw.SWProof{Sigma: wp.Sigma, Mu: mu}, ids)
+	return porsw.VerifyPub(v.pk, swChal, &porsw.SWProof{Sigma: wp.Sigma, Mu: mu}, v.ids)
 }
