@@ -109,9 +109,16 @@ type Charts struct {
 	SuiteSweep SuiteSweepData `json:"suiteSweep"`
 }
 
+type SchemeCapability struct {
+	Name         string `json:"name"`
+	Color        string `json:"color"`
+	SparseBlocks bool   `json:"sparse_blocks"`
+}
+
 type StudyData struct {
-	Date   string `json:"date"`
-	Charts Charts `json:"charts"`
+	Date         string             `json:"date"`
+	Charts       Charts             `json:"charts"`
+	Capabilities []SchemeCapability `json:"capabilities"`
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +130,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	data := StudyData{Date: time.Now().Format("2006-01-02"), Charts: *charts}
+	caps := make([]SchemeCapability, len(schemes))
+	for i, sch := range schemes {
+		caps[i] = SchemeCapability{Name: sch.Name, Color: sch.color, SparseBlocks: sch.Cap.SparseBlocks}
+	}
+	data := StudyData{Date: time.Now().Format("2006-01-02"), Charts: *charts, Capabilities: caps}
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
 		log.Fatal(err)

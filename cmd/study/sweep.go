@@ -20,9 +20,9 @@ type rec struct {
 func measuredSeries(pts map[string][]Point, theoryFn func(name string, x float64) float64) []Series {
 	var out []Series
 	for _, sch := range schemes {
-		out = append(out, Series{Label: sch.name, Color: sch.color, Points: pts[sch.name]})
-		theory := scaleTheory(pts[sch.name], func(x float64) float64 { return theoryFn(sch.name, x) })
-		out = append(out, Series{Label: sch.name + " (theory)", Color: sch.color, Dash: true, Points: theory})
+		out = append(out, Series{Label: sch.Name, Color: sch.color, Points: pts[sch.Name]})
+		theory := scaleTheory(pts[sch.Name], func(x float64) float64 { return theoryFn(sch.Name, x) })
+		out = append(out, Series{Label: sch.Name + " (theory)", Color: sch.color, Dash: true, Points: theory})
 	}
 	return out
 }
@@ -31,12 +31,12 @@ func measuredSeries(pts map[string][]Point, theoryFn func(name string, x float64
 func wireTheory(pts map[string][]Point, formula func(string, int) int) []Series {
 	var out []Series
 	for _, sch := range schemes {
-		out = append(out, Series{Label: sch.name, Color: sch.color, Points: pts[sch.name]})
-		theory := make([]Point, len(pts[sch.name]))
-		for i, p := range pts[sch.name] {
-			theory[i] = Point{p.X, float64(formula(sch.name, int(p.X)))}
+		out = append(out, Series{Label: sch.Name, Color: sch.color, Points: pts[sch.Name]})
+		theory := make([]Point, len(pts[sch.Name]))
+		for i, p := range pts[sch.Name] {
+			theory[i] = Point{p.X, float64(formula(sch.Name, int(p.X)))}
 		}
-		out = append(out, Series{Label: sch.name + " (theory)", Color: sch.color, Dash: true, Points: theory})
+		out = append(out, Series{Label: sch.Name + " (theory)", Color: sch.color, Dash: true, Points: theory})
 	}
 	return out
 }
@@ -46,7 +46,7 @@ func project(data []rec, keep func(rec) bool, x, y func(rec) float64) map[string
 	pts := map[string][]Point{}
 	for _, r := range data {
 		if keep(r) {
-			pts[r.sch.name] = append(pts[r.sch.name], Point{x(r), y(r)})
+			pts[r.sch.Name] = append(pts[r.sch.Name], Point{x(r), y(r)})
 		}
 	}
 	return pts
@@ -147,9 +147,9 @@ func runSweep() (*Charts, error) {
 	names := make([]string, len(schemes))
 	setupV, proveV, verifyV := make([]float64, len(schemes)), make([]float64, len(schemes)), make([]float64, len(schemes))
 	for i, sch := range schemes {
-		names[i] = sch.name
+		names[i] = sch.Name
 		for _, r := range data {
-			if r.sch.name == sch.name && r.n == fixedNBlocks && r.c == fixedChalSize {
+			if r.sch.Name == sch.Name && r.n == fixedNBlocks && r.c == fixedChalSize {
 				setupV[i], proveV[i], verifyV[i] = float64(r.m.SetupTime), float64(r.m.ProveTime), float64(r.m.VerifyTime)
 			}
 		}
@@ -192,14 +192,14 @@ func runSweep() (*Charts, error) {
 			if keyErrs[i][j] != nil {
 				return nil, keyErrs[i][j]
 			}
-			keyPts[sch.name] = append(keyPts[sch.name], Point{float64(kb), float64(keyGrid[i][j].SetupTime)})
+			keyPts[sch.Name] = append(keyPts[sch.Name], Point{float64(kb), float64(keyGrid[i][j].SetupTime)})
 		}
 	}
 	var keySeries []Series
 	for _, sch := range schemes[:2] {
-		keySeries = append(keySeries, Series{Label: sch.name, Color: sch.color, Points: keyPts[sch.name]})
-		theory := scaleTheory(keyPts[sch.name], func(x float64) float64 { return keyTimeScale(sch.name, int(x)) })
-		keySeries = append(keySeries, Series{Label: sch.name + " (theory)", Color: sch.color, Dash: true, Points: theory})
+		keySeries = append(keySeries, Series{Label: sch.Name, Color: sch.color, Points: keyPts[sch.Name]})
+		theory := scaleTheory(keyPts[sch.Name], func(x float64) float64 { return keyTimeScale(sch.Name, int(x)) })
+		keySeries = append(keySeries, Series{Label: sch.Name + " (theory)", Color: sch.color, Dash: true, Points: theory})
 	}
 	keyChart := LineChart{XLabel: "Key bits", YLabel: "Setup time (µs)", Series: keySeries}
 
@@ -245,19 +245,19 @@ func sweepDetection() (LineChart, error) {
 
 	var entries []detEntry
 	for _, sch := range schemes {
-		fmt.Printf("  det setup %s\n", sch.name)
+		fmt.Printf("  det setup %s\n", sch.Name)
 		n, c := detN, detC
 		store := rawStore
-		if sch.name == "BJO" {
+		if sch.Name == "BJO" {
 			n, c = detBJONData, detBJOV
 			store = blockspkg.NewMemStore(randomBlocksOfSize(n, fixedBlockSz))
 		}
-		tagger, err := sch.newTagger(detKeyBits, c)
+		tagger, err := sch.NewTagger(detKeyBits, c)
 		if err != nil {
-			return LineChart{}, fmt.Errorf("det %s: %w", sch.name, err)
+			return LineChart{}, fmt.Errorf("det %s: %w", sch.Name, err)
 		}
 		if _, err = tagger.TagBlocks(store); err != nil {
-			return LineChart{}, fmt.Errorf("det %s tag: %w", sch.name, err)
+			return LineChart{}, fmt.Errorf("det %s tag: %w", sch.Name, err)
 		}
 		encoded := tagger.EncodedBlocks()
 		cs, err := tagger.ClientSetup()
@@ -268,17 +268,17 @@ func sweepDetection() (LineChart, error) {
 		if err != nil {
 			return LineChart{}, err
 		}
-		prover, err := sch.provFactory.NewProver(ps, encoded)
+		prover, err := sch.ProvFactory.NewProver(ps, encoded)
 		if err != nil {
 			return LineChart{}, err
 		}
 		honest := encoded.(*blockspkg.MemStore).Blocks()
 		entries = append(entries, detEntry{
-			name: sch.name, color: sch.color,
+			name: sch.Name, color: sch.color,
 			theoryC: c, nEncoded: len(honest),
 			encodedIDs:  encoded.IDs(),
 			clientSetup: cs, prover: prover, honest: honest,
-			chalFactory: sch.chalFactory,
+			chalFactory: sch.ChalFactory,
 		})
 	}
 

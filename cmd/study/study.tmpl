@@ -22,6 +22,13 @@
   .legend-swatch { width: 16px; height: 3px; border-radius: 2px; }
   footer { margin-top: 3rem; font-size: .8rem; color: #475569; }
   a { color: #60a5fa; }
+  .cap-table { width: 100%; border-collapse: collapse; font-size: .875rem; margin-top: .5rem; }
+  .cap-table th { text-align: left; padding: .5rem .75rem; color: #94a3b8; font-weight: 600;
+                  border-bottom: 1px solid #334155; }
+  .cap-table td { padding: .5rem .75rem; border-bottom: 1px solid #1e293b; }
+  .cap-table tr:last-child td { border-bottom: none; }
+  .badge-yes { color: #10b981; font-weight: 700; }
+  .badge-no  { color: #64748b; }
 </style>
 </head>
 <body>
@@ -60,6 +67,13 @@
   <div class="chart-box full">
     <h2>Suite comparison (setup / prove / verify at fixed params)</h2>
     <canvas id="suiteSweep"></canvas>
+  </div>
+  <div class="chart-box full">
+    <h2>Protocol capabilities</h2>
+    <table class="cap-table">
+      <thead><tr><th>Scheme</th><th>Non-sequential block IDs</th></tr></thead>
+      <tbody id="cap-body"></tbody>
+    </table>
   </div>
 </div>
 
@@ -134,6 +148,17 @@ makeLineChart('proofBytes', c.proofBytes);
 makeLineChart('keySweep',   c.keySweep);
 makeLineChart('detection',  c.detection);
 makeSuiteChart('suiteSweep', c.suiteSweep);
+
+(function() {
+  const tbody = document.getElementById('cap-body');
+  DATA.capabilities.forEach(cap => {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td><span style="color:${cap.color}">&#9632;</span> ${cap.name}</td>` +
+      `<td class="${cap.sparse_blocks ? 'badge-yes' : 'badge-no'}">${cap.sparse_blocks ? '✓ yes' : '✗ no'}</td>`;
+    tbody.appendChild(tr);
+  });
+})();
 </script>
 </body>
 </html>

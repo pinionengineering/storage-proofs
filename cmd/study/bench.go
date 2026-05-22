@@ -5,172 +5,25 @@ import (
 	"fmt"
 	"math/big"
 	"runtime"
-	"sync"
 	"syscall"
 
 	blockspkg "github.com/pinionengineering/storage-proofs/blocks"
+	"github.com/pinionengineering/storage-proofs/capability"
 	"github.com/pinionengineering/storage-proofs/line"
-	lineAteniese "github.com/pinionengineering/storage-proofs/line/ateniese"
-	lineBJO "github.com/pinionengineering/storage-proofs/line/bjo"
-	lineErway "github.com/pinionengineering/storage-proofs/line/erway"
-	lineSW "github.com/pinionengineering/storage-proofs/line/sw"
-	lineSwPub "github.com/pinionengineering/storage-proofs/line/swpub"
-	pdpateniese "github.com/pinionengineering/storage-proofs/pdp/ateniese"
-	pdperway "github.com/pinionengineering/storage-proofs/pdp/erway"
-	porbjo "github.com/pinionengineering/storage-proofs/por/bjo"
-	porsw "github.com/pinionengineering/storage-proofs/por/sw"
-	"github.com/pinionengineering/storage-proofs/suite"
 )
 
-// setupTagger combines line.Tagger and line.SetupProducer, which all scheme
-// taggers implement after TagBlocks has been called.
-type setupTagger interface {
-	line.Tagger
-	line.SetupProducer
-}
-
-// schemeSpec describes one storage-proof scheme using only the line interfaces.
+// schemeSpec wraps capability.SchemeSpec with display metadata for the study.
 type schemeSpec struct {
-	name, color string
-	newTagger   func(keyBits, chalSize int) (setupTagger, error)
-	chalFactory line.ChallengerFactory
-	provFactory line.ProverFactory
+	capability.SchemeSpec
+	color string
 }
 
 var schemes = []schemeSpec{
-	{
-		name:  "Ateniese",
-		color: "#3b82f6",
-		newTagger: func() func(int, int) (setupTagger, error) {
-			var mu sync.Mutex
-			cache := map[int]func() (setupTagger, error){}
-			return func(keyBits, _ int) (setupTagger, error) {
-				mu.Lock()
-				defer mu.Unlock()
-				fn, ok := cache[keyBits]
-				if !ok {
-					pk, sk, err := pdpateniese.KeyGen(keyBits)
-					if err != nil {
-						return nil, err
-					}
-					fn = func() (setupTagger, error) {
-						return lineAteniese.NewTagger(pk, sk, suite.SuiteV1), nil
-					}
-					cache[keyBits] = fn
-				}
-				return fn()
-			}
-		}(),
-		chalFactory: lineAteniese.NewChallengerFactory(),
-		provFactory: lineAteniese.NewProverFactory(),
-	},
-	{
-		name:  "Erway",
-		color: "#ef4444",
-		newTagger: func() func(int, int) (setupTagger, error) {
-			var mu sync.Mutex
-			cache := map[int]func() (setupTagger, error){}
-			return func(keyBits, _ int) (setupTagger, error) {
-				mu.Lock()
-				defer mu.Unlock()
-				fn, ok := cache[keyBits]
-				if !ok {
-					pk, err := pdperway.KeyGen(keyBits)
-					if err != nil {
-						return nil, err
-					}
-					fn = func() (setupTagger, error) {
-						return lineErway.NewTagger(pk, suite.SuiteV1), nil
-					}
-					cache[keyBits] = fn
-				}
-				return fn()
-			}
-		}(),
-		chalFactory: lineErway.NewChallengerFactory(),
-		provFactory: lineErway.NewProverFactory(suite.SuiteV1),
-	},
-	{
-		name:  "SW-Priv",
-		color: "#f59e0b",
-		newTagger: func() func(int, int) (setupTagger, error) {
-			var mu sync.Mutex
-			cache := map[int]func() (setupTagger, error){}
-			return func(_, chalSize int) (setupTagger, error) {
-				mu.Lock()
-				defer mu.Unlock()
-				fn, ok := cache[chalSize]
-				if !ok {
-					sk, err := porsw.KeyGen(&porsw.Params{S: swS, L: chalSize, P: swP})
-					if err != nil {
-						return nil, err
-					}
-					fn = func() (setupTagger, error) {
-						return lineSW.NewTagger(sk, suite.SuiteV1), nil
-					}
-					cache[chalSize] = fn
-				}
-				return fn()
-			}
-		}(),
-		chalFactory: lineSW.NewChallengerFactory(),
-		provFactory: lineSW.NewProverFactory(),
-	},
-	{
-		name:  "BJO",
-		color: "#10b981",
-		newTagger: func() func(int, int) (setupTagger, error) {
-			var mu sync.Mutex
-			cache := map[int]func() (setupTagger, error){}
-			return func(_, chalSize int) (setupTagger, error) {
-				mu.Lock()
-				defer mu.Unlock()
-				fn, ok := cache[chalSize]
-				if !ok {
-					mk, err := porbjo.KeyGen(&porbjo.Params{
-						V: chalSize, W: bjoW, Q: bjoQ, P: bjoP,
-						OuterN: bjoOuterN, OuterK: bjoOuterK,
-					})
-					if err != nil {
-						return nil, err
-					}
-					fn = func() (setupTagger, error) {
-						return lineBJO.NewTagger(mk, suite.SuiteV1), nil
-					}
-					cache[chalSize] = fn
-				}
-				return fn()
-			}
-		}(),
-		chalFactory: lineBJO.NewChallengerFactory(),
-		provFactory: lineBJO.NewProverFactory(suite.SuiteV1),
-	},
-	{
-		name:  "SW-Pub",
-		color: "#8b5cf6",
-		newTagger: func() func(int, int) (setupTagger, error) {
-			var mu sync.Mutex
-			cache := map[int]func() (setupTagger, error){}
-			return func(_, chalSize int) (setupTagger, error) {
-				mu.Lock()
-				defer mu.Unlock()
-				fn, ok := cache[chalSize]
-				if !ok {
-					ps, err := porsw.NewPubScheme(swS, chalSize)
-					if err != nil {
-						return nil, err
-					}
-					fn = func() (setupTagger, error) {
-						return lineSwPub.NewTagger(ps, suite.SuiteV1), nil
-					}
-					cache[chalSize] = fn
-				}
-				return fn()
-			}
-		}(),
-		chalFactory: lineSwPub.NewChallengerFactory(),
-		provFactory: lineSwPub.NewProverFactory(),
-	},
+	{SchemeSpec: capability.Schemes[0], color: "#3b82f6"}, // Ateniese
+	{SchemeSpec: capability.Schemes[1], color: "#ef4444"}, // Erway
+	{SchemeSpec: capability.Schemes[2], color: "#f59e0b"}, // SW-Priv
+	{SchemeSpec: capability.Schemes[3], color: "#10b981"}, // BJO
+	{SchemeSpec: capability.Schemes[4], color: "#8b5cf6"}, // SW-Pub
 }
 
 // Params describes one experimental condition.
@@ -194,18 +47,18 @@ type Metrics struct {
 // run executes one complete protocol round for the given scheme and parameters
 // using the line interfaces uniformly. This is the innermost experiment loop.
 func run(sch schemeSpec, store blockspkg.BlockStore, p Params) (Metrics, error) {
-	tagger, err := sch.newTagger(p.KeyBits, p.ChalSize)
+	tagger, err := sch.NewTagger(p.KeyBits, p.ChalSize)
 	if err != nil {
-		return Metrics{}, fmt.Errorf("%s newTagger: %w", sch.name, err)
+		return Metrics{}, fmt.Errorf("%s newTagger: %w", sch.Name, err)
 	}
 
 	// Time TagBlocks (server setup).
 	setupTime, err := timeOp(benchReps, func() error { _, e := tagger.TagBlocks(store); return e })
 	if err != nil {
-		return Metrics{}, fmt.Errorf("%s tag: %w", sch.name, err)
+		return Metrics{}, fmt.Errorf("%s tag: %w", sch.Name, err)
 	}
 	if _, err = tagger.TagBlocks(store); err != nil { // final call for consistent state
-		return Metrics{}, fmt.Errorf("%s tag final: %w", sch.name, err)
+		return Metrics{}, fmt.Errorf("%s tag final: %w", sch.Name, err)
 	}
 
 	encoded := tagger.EncodedBlocks()
@@ -218,11 +71,11 @@ func run(sch schemeSpec, store blockspkg.BlockStore, p Params) (Metrics, error) 
 		return Metrics{}, err
 	}
 
-	challenger, err := sch.chalFactory.NewChallenger(clientSetup, p.ChalSize)
+	challenger, err := sch.ChalFactory.NewChallenger(clientSetup, p.ChalSize)
 	if err != nil {
 		return Metrics{}, err
 	}
-	prover, err := sch.provFactory.NewProver(proverSetup, encoded)
+	prover, err := sch.ProvFactory.NewProver(proverSetup, encoded)
 	if err != nil {
 		return Metrics{}, err
 	}
