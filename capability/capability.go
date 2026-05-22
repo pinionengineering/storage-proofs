@@ -46,6 +46,7 @@ type SetupTagger interface {
 // Cap describes which optional protocol properties a scheme supports.
 type Cap struct {
 	SparseBlocks bool // supports non-sequential block identifiers
+	Extraction   bool // supports file recovery via line.ExtractorProducer
 }
 
 // SchemeSpec describes one storage-proof scheme using the line interfaces.
@@ -139,7 +140,7 @@ var Schemes = []SchemeSpec{
 	},
 	{
 		Name: "BJO",
-		Cap:  Cap{SparseBlocks: false},
+		Cap:  Cap{SparseBlocks: false, Extraction: true},
 		NewTagger: func() func(int, int) (SetupTagger, error) {
 			var mu sync.Mutex
 			cache := map[int]func() (SetupTagger, error){}

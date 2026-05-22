@@ -20,8 +20,8 @@ package line
 //
 // Because derivation is deterministic, both the prover and the validator can
 // independently reproduce (indices, coeffs) from (seed, ids, n, modulus).
-// Only (seed, n, C) need to travel on the wire; ids are reconstructed locally
-// (for sequential stores: ids[i] = blocks.IntID(i)).
+// Only (seed, n, C) need to travel on the wire. The prover supplies ids from
+// store.IDs(); the validator supplies ids captured at Challenge time.
 import (
 	"bytes"
 	"crypto/hmac"

@@ -51,6 +51,12 @@ type Extractor interface {
 	Extract(store blocks.BlockStore) (blocks.BlockStore, error)
 }
 
+// ExtractorProducer is implemented by Taggers that support file extraction.
+// NewExtractor must be called after TagBlocks.
+type ExtractorProducer interface {
+	NewExtractor() (Extractor, error)
+}
+
 // SetupProducer is implemented by Taggers after TagBlocks has been called.
 // It provides the artifacts needed by both sides of the audit protocol.
 type SetupProducer interface {

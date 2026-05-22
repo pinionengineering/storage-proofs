@@ -97,6 +97,14 @@ func (t *Tagger) TagBlocks(store blocks.BlockStore) ([]line.Tag, error) {
 // server must store (encoded blocks + sentinels + MAC).
 func (t *Tagger) EncodedFile() *porbjo.EncodedFile { return t.ef }
 
+// NewExtractor implements line.ExtractorProducer. Must be called after TagBlocks.
+func (t *Tagger) NewExtractor() (line.Extractor, error) {
+	if t.ef == nil {
+		return nil, fmt.Errorf("bjo: TagBlocks must be called before NewExtractor")
+	}
+	return NewExtractor(t.s, t.mk, t.ef), nil
+}
+
 // WireParams returns the scheme parameters in a JSON-serializable form for
 // inclusion in the setup payload to the server.
 func (t *Tagger) WireParams() WireParams {
