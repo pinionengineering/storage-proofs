@@ -2,6 +2,41 @@ package main
 
 import "math"
 
+// harmonicSum returns H_N = Σ_{k=1}^{N} 1/k.
+func harmonicSum(N int) float64 {
+	h := 0.0
+	for k := 1; k <= N; k++ {
+		h += 1.0 / float64(k)
+	}
+	return h
+}
+
+// extractionProofsExpected returns the expected number of proofs needed to
+// reach a full-rank linear system for extraction, using the generalized
+// coupon collector formula:
+//
+//	E[proofs] = N·H_N / L
+//
+// where N is the number of unknowns (file blocks for SW; encoded blocks for
+// BJO), L is the number of blocks constrained per proof, and H_N is the N-th
+// harmonic number. Each proof contributes one linear equation over Z_P; with
+// random challenge coefficients the system becomes full-rank as soon as every
+// unknown appears in at least one equation (the coverage event), which is the
+// coupon-collector problem with L coupons drawn per round.
+func extractionProofsExpected(N, L int) float64 {
+	if L <= 0 || N <= 0 {
+		return 0
+	}
+	return float64(N) * harmonicSum(N) / float64(L)
+}
+
+// bjoEncodedBlocks returns the total number of encoded blocks BJO stores for
+// a file of n blocks with the given outer RS parameters.
+func bjoEncodedBlocks(n, outerN, outerK int) int {
+	stripes := (n + outerK - 1) / outerK
+	return stripes * outerN
+}
+
 // hypergeometricDetectionProb returns the probability of detecting corruption
 // in one challenge when N total blocks exist, C are challenged, and t are corrupt.
 // Uses the exact hypergeometric formula P = 1 - C(N-t, C) / C(N, C).

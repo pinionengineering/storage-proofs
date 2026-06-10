@@ -65,8 +65,8 @@ func (ps *PrivScheme) RespondFetch(tags [][]byte, chal *SWChallenge, store block
 }
 
 // Verify reconstructs sigma from the secret key and compares it to the proof.
-// ids is store.IDs() from the audited store; §3.2 uses IDInt(id) as the PRF
-// input per block, matching what TagBlocks computed at setup.
+// ids is store.IDs() from the audited store; the PRF input for each challenged
+// block is its raw identifier bytes, matching what TagBlocks computed.
 func (ps *PrivScheme) Verify(chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error) {
 	c := &Challenge{Indices: chal.Indices, Coeffs: chal.Coeffs}
 	p := &Proof{Sigma: new(big.Int).SetBytes(proof.Sigma), Mu: proof.Mu}

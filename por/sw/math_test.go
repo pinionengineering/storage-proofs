@@ -56,7 +56,7 @@ func TestTagEquation(t *testing.T) {
 	}
 
 	// Compute expected σ_0 directly.
-	expected := new(big.Int).Mod(suite.SuiteV1.PRF(k, 0), P)
+	expected := new(big.Int).Mod(suite.SuiteV1.PRFBytes(k, blocks.IntID(0)), P)
 	for j := range params.S {
 		fij := sectorElem(block, j, params.S, P)
 		expected.Add(expected, new(big.Int).Mul(fij, alpha[j]))
@@ -68,31 +68,31 @@ func TestTagEquation(t *testing.T) {
 	}
 }
 
-// TestTagPRFDeterministic verifies that suite.SuiteV1.PRF(K, i) is deterministic:
-// calling it twice with the same key and index yields the same value.
+// TestTagPRFDeterministic verifies that suite.SuiteV1.PRFBytes(K, id) is deterministic:
+// calling it twice with the same key and identifier yields the same value.
 func TestTagPRFDeterministic(t *testing.T) {
 	k := make([]byte, 32)
 	rand.Read(k)
 
-	for _, i := range []int{0, 1, 99, 1000} {
-		v1 := suite.SuiteV1.PRF(k, i)
-		v2 := suite.SuiteV1.PRF(k, i)
+	for _, id := range [][]byte{blocks.IntID(0), blocks.IntID(1), blocks.IntID(99), {0xde, 0xad, 0xbe, 0xef}} {
+		v1 := suite.SuiteV1.PRFBytes(k, id)
+		v2 := suite.SuiteV1.PRFBytes(k, id)
 		if v1.Cmp(v2) != 0 {
-			t.Fatalf("PRF not deterministic at i=%d", i)
+			t.Fatalf("PRFBytes not deterministic for id=%x", id)
 		}
 	}
 }
 
-// TestTagPRFDistinct verifies that different block indices produce different
+// TestTagPRFDistinct verifies that different block identifiers produce different
 // PRF values with overwhelming probability.
 func TestTagPRFDistinct(t *testing.T) {
 	k := make([]byte, 32)
 	rand.Read(k)
 
-	v0 := suite.SuiteV1.PRF(k, 0)
-	v1 := suite.SuiteV1.PRF(k, 1)
+	v0 := suite.SuiteV1.PRFBytes(k, blocks.IntID(0))
+	v1 := suite.SuiteV1.PRFBytes(k, blocks.IntID(1))
 	if v0.Cmp(v1) == 0 {
-		t.Fatal("suite.SuiteV1.PRF(K, 0) == suite.SuiteV1.PRF(K, 1) — collision (negligible probability)")
+		t.Fatal("PRFBytes(K, IntID(0)) == PRFBytes(K, IntID(1)) — collision (negligible probability)")
 	}
 }
 
@@ -190,9 +190,10 @@ func TestVerificationEquation(t *testing.T) {
 
 	// Check the equation manually.
 	expected := big.NewInt(0)
+	ids := blocks.NewMemStore(file).IDs()
 	for t2, idx := range chal.Indices {
 		nu := chal.Coeffs[t2]
-		prf := new(big.Int).Mod(suite.SuiteV1.PRF(sk.K, idx), P)
+		prf := new(big.Int).Mod(suite.SuiteV1.PRFBytes(sk.K, ids[idx]), P)
 		expected.Add(expected, new(big.Int).Mul(nu, prf))
 		expected.Mod(expected, P)
 	}

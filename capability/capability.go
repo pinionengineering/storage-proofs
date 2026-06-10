@@ -4,6 +4,8 @@
 package capability
 
 import (
+	"crypto/rand"
+	"fmt"
 	"math/big"
 	"sync"
 
@@ -21,20 +23,35 @@ import (
 )
 
 const (
-	bjoOuterN = 8
-	bjoOuterK = 4
-	bjoW      = 20
-	bjoQ      = 10
-	swS       = 4
+	bjoOuterN    = 8
+	bjoOuterK    = 4
+	bjoW         = 20
+	bjoQ         = 500 // must exceed expected witnesses for extraction; N=100 needs ~236 in the study sweep
+	swS          = 4
+	testBlockSize = 32 // byte length of blocks used in capability tests
 )
 
 var (
+	// swP is a 128-bit prime (2^128 + 51). For SW, each block is split into S
+	// sectors; swP must exceed the max sector value (block bytes / S).
 	swP = func() *big.Int {
 		p, _ := new(big.Int).SetString("340282366920938463463374607431768211507", 10)
 		return p
 	}()
-	bjoP = big.NewInt(2147483647)
 )
+
+// bjoPForBlockSize returns a random prime with enough bits to exceed the
+// maximum value of a blockBytes-byte block (P > 2^(8·blockBytes)). BJO treats
+// each encoded block as a single Z_P element, so P must be larger than any
+// block value for the extraction property to hold regardless of block size.
+func bjoPForBlockSize(blockBytes int) *big.Int {
+	bits := blockBytes*8 + 1
+	p, err := rand.Prime(rand.Reader, bits)
+	if err != nil {
+		panic(fmt.Sprintf("capability: bjoPForBlockSize(%d): %v", blockBytes, err))
+	}
+	return p
+}
 
 // SetupTagger combines line.Tagger and line.SetupProducer, which all scheme
 // taggers implement after TagBlocks has been called.
@@ -114,7 +131,7 @@ var Schemes = []SchemeSpec{
 	},
 	{
 		Name: "SW-Priv",
-		Cap:  Cap{SparseBlocks: true},
+		Cap:  Cap{SparseBlocks: true, Extraction: true},
 		NewTagger: func() func(int, int) (SetupTagger, error) {
 			var mu sync.Mutex
 			cache := map[int]func() (SetupTagger, error){}
@@ -144,6 +161,9 @@ var Schemes = []SchemeSpec{
 		NewTagger: func() func(int, int) (SetupTagger, error) {
 			var mu sync.Mutex
 			cache := map[int]func() (SetupTagger, error){}
+			// P is generated once per chalSize with enough bits for testBlockSize-byte
+			// blocks. In production, callers choose P based on their actual block size.
+			bjoP := bjoPForBlockSize(testBlockSize)
 			return func(_, chalSize int) (SetupTagger, error) {
 				mu.Lock()
 				defer mu.Unlock()
@@ -169,7 +189,7 @@ var Schemes = []SchemeSpec{
 	},
 	{
 		Name: "SW-Pub",
-		Cap:  Cap{SparseBlocks: true},
+		Cap:  Cap{SparseBlocks: true, Extraction: true},
 		NewTagger: func() func(int, int) (SetupTagger, error) {
 			var mu sync.Mutex
 			cache := map[int]func() (SetupTagger, error){}

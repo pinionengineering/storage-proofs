@@ -65,13 +65,17 @@
     <canvas id="detection"></canvas>
   </div>
   <div class="chart-box full">
+    <h2>Witnesses to extract vs. file size (SW-Priv &amp; BJO)</h2>
+    <canvas id="extraction"></canvas>
+  </div>
+  <div class="chart-box full">
     <h2>Suite comparison (setup / prove / verify at fixed params)</h2>
     <canvas id="suiteSweep"></canvas>
   </div>
   <div class="chart-box full">
     <h2>Protocol capabilities</h2>
     <table class="cap-table">
-      <thead><tr><th>Scheme</th><th>Non-sequential block IDs</th></tr></thead>
+      <thead><tr><th>Scheme</th><th>Non-sequential block IDs</th><th>File extraction</th></tr></thead>
       <tbody id="cap-body"></tbody>
     </table>
   </div>
@@ -147,6 +151,7 @@ makeLineChart('chalBytes',  c.chalBytes);
 makeLineChart('proofBytes', c.proofBytes);
 makeLineChart('keySweep',   c.keySweep);
 makeLineChart('detection',  c.detection);
+makeLineChart('extraction', c.extraction);
 makeSuiteChart('suiteSweep', c.suiteSweep);
 
 (function() {
@@ -155,7 +160,8 @@ makeSuiteChart('suiteSweep', c.suiteSweep);
     const tr = document.createElement('tr');
     tr.innerHTML =
       `<td><span style="color:${cap.color}">&#9632;</span> ${cap.name}</td>` +
-      `<td class="${cap.sparse_blocks ? 'badge-yes' : 'badge-no'}">${cap.sparse_blocks ? '✓ yes' : '✗ no'}</td>`;
+      `<td class="${cap.sparse_blocks ? 'badge-yes' : 'badge-no'}">${cap.sparse_blocks ? '✓ yes' : '✗ no'}</td>` +
+      `<td class="${cap.extraction ? 'badge-yes' : 'badge-no'}">${cap.extraction ? '✓ yes' : '✗ no'}</td>`;
     tbody.appendChild(tr);
   });
 })();

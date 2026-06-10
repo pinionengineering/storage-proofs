@@ -41,10 +41,12 @@ type wireProof struct {
 
 // Tagger implements line.Tagger and line.SetupProducer for the SW scheme.
 type Tagger struct {
-	sk    *porsw.SecretKey
-	s     *suite.Suite
-	store blocks.BlockStore // cached after TagBlocks
-	tags  []line.Tag        // cached after TagBlocks
+	sk       *porsw.SecretKey
+	s        *suite.Suite
+	store    blocks.BlockStore // cached after TagBlocks
+	tags     []line.Tag        // cached after TagBlocks
+	ids      [][]byte          // store.IDs() captured at TagBlocks time
+	blockLen int               // byte length of first block, for extraction
 }
 
 func NewTagger(sk *porsw.SecretKey, s *suite.Suite) *Tagger {
@@ -66,6 +68,14 @@ func (t *Tagger) TagBlocks(store blocks.BlockStore) ([]line.Tag, error) {
 	}
 	t.store = store
 	t.tags = tags
+	t.ids = store.IDs()
+	if store.Len() > 0 {
+		b, err := blocks.BlockAt(store, 0)
+		if err != nil {
+			return nil, fmt.Errorf("sw.TagBlocks: first block: %w", err)
+		}
+		t.blockLen = len(b)
+	}
 	return tags, nil
 }
 
@@ -108,6 +118,25 @@ func (t *Tagger) ClientSetup() ([]byte, error) {
 }
 
 func (t *Tagger) EncodedBlocks() blocks.BlockStore { return t.store }
+
+// NewExtractor implements line.ExtractorProducer. Must be called after TagBlocks.
+// The extractor accumulates witnessed (challenge, proof) pairs; once it has
+// enough linearly independent equations it can recover the original file blocks.
+func (t *Tagger) NewExtractor() (line.Extractor, error) {
+	if t.ids == nil {
+		return nil, fmt.Errorf("sw: TagBlocks must be called before NewExtractor")
+	}
+	N := len(t.ids)
+	ids := make([][]byte, N)
+	copy(ids, t.ids)
+	return &swExtractor{
+		s:        t.s,
+		sk:       t.sk,
+		ids:      ids,
+		blockLen: t.blockLen,
+		rows:     nil,
+	}, nil
+}
 
 // ---------------------------------------------------------------------------
 // ChallengerFactory
@@ -302,4 +331,124 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 		&porsw.Challenge{Indices: indices, Coeffs: coeffs},
 		&porsw.Proof{Sigma: wp.Sigma, Mu: wp.Mu},
 	)
+}
+
+// ---------------------------------------------------------------------------
+// Extractor
+// ---------------------------------------------------------------------------
+
+// swRow records the information from one witnessed (challenge, proof) pair.
+// Each row contributes one linear equation per sector: the challenged block
+// positions and their ν coefficients form the LHS; the proof's μ values are
+// the per-sector RHS.
+type swRow struct {
+	indices []int      // positions in ids that were challenged
+	coeffs  []*big.Int // ν_t values, parallel to indices
+	rhs     []*big.Int // μ_j values, one per sector (length S)
+}
+
+// swExtractor implements line.Extractor for the SW private-key scheme.
+// It accumulates witnessed proofs as linear equations and solves for the
+// original block sector values once the system becomes full-rank.
+type swExtractor struct {
+	s        *suite.Suite
+	sk       *porsw.SecretKey
+	ids      [][]byte // block identifiers captured at TagBlocks time
+	blockLen int      // byte length of each original block
+	rows     []swRow
+}
+
+// Witness records one validated (challenge, proof) pair. The caller must
+// verify the proof before calling Witness.
+func (e *swExtractor) Witness(chal line.Challenge, proof line.Proof) error {
+	var wc wireChal
+	if err := json.Unmarshal(chal, &wc); err != nil {
+		return fmt.Errorf("sw.Extractor.Witness: challenge: %w", err)
+	}
+	s, ok := suite.SuiteByID(wc.SuiteID)
+	if !ok {
+		return fmt.Errorf("sw.Extractor.Witness: unknown suite %d", wc.SuiteID)
+	}
+	var wp wireProof
+	if err := json.Unmarshal(proof, &wp); err != nil {
+		return fmt.Errorf("sw.Extractor.Witness: proof: %w", err)
+	}
+	if len(wp.Mu) != e.sk.Params.S {
+		return fmt.Errorf("sw.Extractor.Witness: proof has %d μ values, want %d", len(wp.Mu), e.sk.Params.S)
+	}
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, e.ids, wc.C, e.sk.Params.P)
+	e.rows = append(e.rows, swRow{indices: indices, coeffs: coeffs, rhs: wp.Mu})
+	return nil
+}
+
+// Extract solves for the original block values from the accumulated witnessed
+// proofs. Returns ErrInsufficientProofs if the system is not yet full-rank.
+//
+// The extraction property of SW (§3) requires P > max(sector value), which
+// ensures that the mod-P representation of each sector is lossless and the
+// recovered bytes exactly reproduce the originals.
+func (e *swExtractor) Extract() (blocks.BlockStore, error) {
+	N := len(e.ids)
+	S := e.sk.Params.S
+	P := e.sk.Params.P
+	if N == 0 {
+		return blocks.NewMemStore(nil), nil
+	}
+
+	// Build one augmented matrix per sector and solve each independently.
+	// Each row has N coefficient entries plus a RHS; the coefficient for
+	// block position p is ν_t when p == indices[t], zero otherwise.
+	sectorVals := make([][]*big.Int, N) // sectorVals[i][j] = f_{i,j}
+	for i := range N {
+		sectorVals[i] = make([]*big.Int, S)
+	}
+
+	aug := make([][]*big.Int, len(e.rows))
+	for r, row := range e.rows {
+		aug[r] = make([]*big.Int, N+1)
+		for k := range aug[r] {
+			aug[r][k] = new(big.Int)
+		}
+		for k, idx := range row.indices {
+			aug[r][idx] = new(big.Int).Set(row.coeffs[k])
+		}
+	}
+
+	for j := range S {
+		// Set the RHS column for sector j.
+		for r, row := range e.rows {
+			aug[r][N] = new(big.Int).Set(row.rhs[j])
+		}
+		sol := line.GaussElimModP(aug, N, P)
+		if sol == nil {
+			return nil, line.ErrInsufficientProofs
+		}
+		for i := range N {
+			sectorVals[i][j] = sol[i]
+		}
+	}
+
+	// Reconstruct block bytes from sector field elements.
+	// sectorElem encodes sector j as block[j*sectorSize : min((j+1)*sectorSize, blockLen)]
+	// interpreted as a big-endian integer mod P, so reconstruction is the inverse.
+	sectorSize := (e.blockLen + S - 1) / S
+	reconstructed := make([][]byte, N)
+	for i := range N {
+		block := make([]byte, e.blockLen)
+		for j := range S {
+			start := j * sectorSize
+			end := start + sectorSize
+			if end > e.blockLen {
+				end = e.blockLen
+			}
+			size := end - start
+			b := sectorVals[i][j].Bytes()
+			if len(b) > size {
+				b = b[len(b)-size:] // truncate leading bytes (P constraint ensures no data loss)
+			}
+			copy(block[end-len(b):end], b)
+		}
+		reconstructed[i] = block
+	}
+	return blocks.NewMemStore(reconstructed), nil
 }

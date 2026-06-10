@@ -53,6 +53,11 @@ type Suite struct {
 	// G[s][u] = PRF(GSeed, u, s).
 	PRF func(key []byte, js ...int) *big.Int
 
+	// PRFBytes is a keyed pseudorandom function over arbitrary byte-string inputs.
+	// Used by SW-Priv to bind each tag to the full block identifier, so the PRF
+	// input carries all the entropy of the identifier regardless of its length.
+	PRFBytes func(key []byte, id []byte) *big.Int
+
 	// BuildPRP constructs a pseudorandom permutation of [0, n) from key.
 	// Called with the same key and n by both GenProof and CheckProof.
 	BuildPRP func(key []byte, n int) []int
@@ -120,6 +125,7 @@ var SuiteV1 = registerSuite(&Suite{
 	HashBlock: sha256HashBlock,
 	HashToQRN: mgf1SHA256HashToQRN,
 	PRF:       hmacSHA256PRF256,
+	PRFBytes:  hmacSHA256PRFBytes256,
 	BuildPRP:  hmacSHA256PRP,
 })
 
@@ -140,6 +146,7 @@ var SuiteV2 = registerSuite(&Suite{
 	HashBlock: sha256HashBlock,
 	HashToQRN: mgf1SHA256HashToQRN,
 	PRF:       aesCTRPRF256,
+	PRFBytes:  aesCTRPRFBytes256,
 	BuildPRP:  hmacSHA256PRP,
 })
 
@@ -162,6 +169,7 @@ var SuiteV3 = registerSuite(&Suite{
 	HashBlock: blake3HashBlock,
 	HashToQRN: blake3HashToQRN,
 	PRF:       blake3PRF256,
+	PRFBytes:  blake3PRFBytes256,
 	BuildPRP:  hmacSHA256PRP,
 })
 
@@ -211,6 +219,16 @@ func hmacSHA256PRF256(key []byte, js ...int) *big.Int {
 	return new(big.Int).SetBytes(mac.Sum(nil)) // full 256-bit output
 }
 
+// hmacSHA256PRFBytes256 is the byte-string variant of hmacSHA256PRF256.
+// It writes the full identifier directly to the HMAC rather than encoding it
+// as a fixed-width integer, so inputs of any length are handled without
+// truncation.
+func hmacSHA256PRFBytes256(key []byte, id []byte) *big.Int {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(id)
+	return new(big.Int).SetBytes(mac.Sum(nil))
+}
+
 // aesCTRPRF256 is a 256-bit PRF built on AES-256 in counter mode.
 //
 // The PRF key is expanded to 32 bytes via SHA-256 to satisfy AES-256's
@@ -232,6 +250,19 @@ func aesCTRPRF256(key []byte, js ...int) *big.Int {
 	}
 	ciph, _ := aes.NewCipher(aesKey[:]) // always succeeds: key is 32 bytes
 	stream := cipher.NewCTR(ciph, nonce)
+	out := make([]byte, 32)
+	stream.XORKeyStream(out, out)
+	return new(big.Int).SetBytes(out)
+}
+
+// aesCTRPRFBytes256 is the byte-string variant of aesCTRPRF256.
+// The identifier is hashed via SHA-256 to produce a fixed 16-byte AES nonce,
+// allowing inputs of arbitrary length.
+func aesCTRPRFBytes256(key []byte, id []byte) *big.Int {
+	aesKey := sha256.Sum256(key)
+	nonce := sha256.Sum256(id)
+	ciph, _ := aes.NewCipher(aesKey[:])
+	stream := cipher.NewCTR(ciph, nonce[:aes.BlockSize])
 	out := make([]byte, 32)
 	stream.XORKeyStream(out, out)
 	return new(big.Int).SetBytes(out)
@@ -272,6 +303,15 @@ func blake3PRF256(key []byte, js ...int) *big.Int {
 		binary.BigEndian.PutUint64(buf, uint64(j))
 		h.Write(buf)
 	}
+	return new(big.Int).SetBytes(h.Sum(nil))
+}
+
+// blake3PRFBytes256 is the byte-string variant of blake3PRF256.
+// It writes the full identifier to the keyed BLAKE3 hasher directly.
+func blake3PRFBytes256(key []byte, id []byte) *big.Int {
+	k32 := blake3.Sum256(key)
+	h := blake3.New(32, k32[:])
+	h.Write(id)
 	return new(big.Int).SetBytes(h.Sum(nil))
 }
 

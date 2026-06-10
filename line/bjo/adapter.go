@@ -330,25 +330,127 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 // Extractor
 // ---------------------------------------------------------------------------
 
-// Extractor implements line.Extractor for the BJO scheme.
+// bjoEquation records the information from one witnessed (challenge, proof) pair.
+// Each equation constrains a group of v encoded block field elements:
+//
+//	M_j = Σ_{pos=0}^{v-1} F̃_{blockPos[pos]} · G[pos+1][u]  mod P
+type bjoEquation struct {
+	blockPos []int    // v challenged block indices into ef.Blocks
+	u        int      // inner code generator column (1-indexed)
+	mj       *big.Int // proof value M_j as a Z_P element
+}
+
+// Extractor implements line.Extractor for the BJO scheme using passive
+// witnessing. Each witnessed (challenge, proof) pair contributes one linear
+// equation over Z_P involving the v challenged encoded block field elements.
+// Once the accumulated equations form a full-rank system over all t encoded
+// blocks, Extract applies the SA-ECC outer decode to recover the original file.
 type Extractor struct {
-	s  *suite.Suite
-	mk *porbjo.MasterKey
-	ef *porbjo.EncodedFile
+	s    *suite.Suite
+	mk   *porbjo.MasterKey
+	ef   *porbjo.EncodedFile // carries params, sentinels, MAC, and block length
+	t    int                 // total encoded block count (len(ef.Blocks))
+	rows []bjoEquation
 }
 
 // NewExtractor constructs an Extractor from the EncodedFile produced by
-// Tagger.TagBlocks. The fetch argument to Extract is unused; bjo.Extract
-// operates on the in-memory EncodedFile directly.
+// Tagger.TagBlocks.
 func NewExtractor(s *suite.Suite, mk *porbjo.MasterKey, ef *porbjo.EncodedFile) *Extractor {
-	return &Extractor{s: s, mk: mk, ef: ef}
+	return &Extractor{s: s, mk: mk, ef: ef, t: len(ef.Blocks)}
 }
 
-// Extract implements line.Extractor.
-func (e *Extractor) Extract(_ blocks.BlockStore) (blocks.BlockStore, error) {
-	file, err := porbjo.Extract(e.s, e.mk, e.ef)
+// Witness records one validated (challenge, proof) pair. The caller must
+// verify the proof before calling Witness.
+//
+// It derives the v challenged block indices from chal.Kjc (mirroring the
+// server's RespondFetch) and stores the inner-code equation for later solving.
+func (e *Extractor) Witness(chal line.Challenge, proof line.Proof) error {
+	var wc wireChal
+	if err := json.Unmarshal(chal, &wc); err != nil {
+		return fmt.Errorf("bjo.Extractor.Witness: challenge: %w", err)
+	}
+	var wp wireProof
+	if err := json.Unmarshal(proof, &wp); err != nil {
+		return fmt.Errorf("bjo.Extractor.Witness: proof: %w", err)
+	}
+
+	// Derive the same v block indices that RespondFetch used (§4.2.1 respond).
+	indices := e.s.BuildPRP(wc.Kjc, e.t)[:e.mk.Params.V]
+
+	mj := new(big.Int).SetBytes(wp.Mj)
+	e.rows = append(e.rows, bjoEquation{
+		blockPos: append([]int(nil), indices...),
+		u:        wc.U,
+		mj:       mj,
+	})
+	return nil
+}
+
+// Extract solves for all t encoded block field elements from the accumulated
+// witnessed proofs, then delegates to the BJO Phase II SA-ECC outer decode
+// (via porbjo.Extract with Alpha=0) to recover the original file.
+//
+// Returns ErrInsufficientProofs if the linear system is not yet full-rank.
+func (e *Extractor) Extract() (blocks.BlockStore, error) {
+	p := e.mk.Params
+
+	// Build the t×(t+1) augmented matrix.
+	// Row r corresponds to equation r:
+	//   Σ_{pos} G[pos+1][u_r] · F̃_{blockPos[pos]} = M_j
+	// G[row][u] = PRF(GSeed, u, row) mod P  (§4.2.1 inner code)
+	aug := make([][]*big.Int, len(e.rows))
+	for r, eq := range e.rows {
+		aug[r] = make([]*big.Int, e.t+1)
+		for k := range aug[r] {
+			aug[r][k] = new(big.Int)
+		}
+		for pos, idx := range eq.blockPos {
+			// G[pos+1][u] = PRF(GSeed, u, pos+1) mod P
+			g := new(big.Int).Mod(e.s.PRF(p.GSeed, eq.u, pos+1), p.P)
+			aug[r][idx].Add(aug[r][idx], g)
+			aug[r][idx].Mod(aug[r][idx], p.P)
+		}
+		aug[r][e.t] = new(big.Int).Set(eq.mj)
+	}
+
+	sol := line.GaussElimModP(aug, e.t, p.P)
+	if sol == nil {
+		return nil, line.ErrInsufficientProofs
+	}
+
+	// Reconstruct encoded block bytes from the recovered Z_P field elements.
+	// F̃_i = SetBytes(block_i) mod P, so the inverse is: block_i = sol[i].Bytes()
+	// padded to the original block length. The extraction property requires
+	// P > max(block value) so the mod-P reduction is lossless.
+	blockLen := len(e.ef.Blocks[0])
+	recoveredBlocks := make([][]byte, e.t)
+	for i, fi := range sol {
+		b := fi.Bytes()
+		block := make([]byte, blockLen)
+		if len(b) > blockLen {
+			b = b[len(b)-blockLen:]
+		}
+		copy(block[blockLen-len(b):], b)
+		recoveredBlocks[i] = block
+	}
+
+	// Phase II: apply SA-ECC outer decode and verify file MAC.
+	// Setting Alpha=0 in a params copy tells porbjo.Extract to skip Phase I
+	// and use the supplied blocks directly (§4.2.1 extract, Alpha=0 path).
+	paramsCopy := *p
+	paramsCopy.Alpha = 0
+	mkCopy := *e.mk
+	mkCopy.Params = &paramsCopy
+	syntheticEF := &porbjo.EncodedFile{
+		Blocks:     recoveredBlocks,
+		NumMessage: e.ef.NumMessage,
+		Sentinels:  e.ef.Sentinels,
+		FileMAC:    e.ef.FileMAC,
+		Params:     &paramsCopy,
+	}
+	file, err := porbjo.Extract(e.s, &mkCopy, syntheticEF)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("bjo.Extractor.Extract: %w", err)
 	}
 	return blocks.NewMemStore(file), nil
 }

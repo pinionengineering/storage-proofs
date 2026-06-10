@@ -297,3 +297,128 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 	swChal := &porsw.SWChallenge{Kind: porsw.PubKind, Indices: indices, Coeffs: coeffs}
 	return porsw.VerifyPub(v.pk, swChal, &porsw.SWProof{Sigma: wp.Sigma, Mu: mu}, v.ids)
 }
+
+// ---------------------------------------------------------------------------
+// Extractor
+// ---------------------------------------------------------------------------
+
+// NewExtractor implements line.ExtractorProducer. Must be called after TagBlocks.
+func (t *Tagger) NewExtractor() (line.Extractor, error) {
+	if t.store == nil {
+		return nil, fmt.Errorf("swpub: TagBlocks must be called before NewExtractor")
+	}
+	blockLen := 0
+	if b, err := blocks.BlockAt(t.store, 0); err == nil {
+		blockLen = len(b)
+	}
+	return &swPubExtractor{
+		S:        t.ps.S(),
+		ids:      t.store.IDs(),
+		blockLen: blockLen,
+	}, nil
+}
+
+// swPubRow records one witnessed (challenge, proof) pair as linear equations.
+// Each row contributes one equation per sector: challenged block positions and
+// their ν coefficients form the LHS; the proof's μ values are the per-sector RHS.
+type swPubRow struct {
+	indices []int
+	coeffs  []*big.Int
+	rhs     []*big.Int // μ_j values, one per sector
+}
+
+// swPubExtractor implements line.Extractor for the SW public-key scheme.
+// Extraction uses the same Gaussian elimination as the private-key scheme;
+// the only difference is that the modulus is bn256.Order instead of swP, since
+// sector elements in the public scheme are reduced mod the curve order.
+type swPubExtractor struct {
+	S        int
+	ids      [][]byte
+	blockLen int
+	rows     []swPubRow
+}
+
+func (e *swPubExtractor) Witness(chal line.Challenge, proof line.Proof) error {
+	var wc wireChal
+	if err := json.Unmarshal(chal, &wc); err != nil {
+		return fmt.Errorf("swpub.Extractor.Witness: challenge: %w", err)
+	}
+	s, ok := suite.SuiteByID(wc.SuiteID)
+	if !ok {
+		return fmt.Errorf("swpub.Extractor.Witness: unknown suite %d", wc.SuiteID)
+	}
+	var wp wireProof
+	if err := json.Unmarshal(proof, &wp); err != nil {
+		return fmt.Errorf("swpub.Extractor.Witness: proof: %w", err)
+	}
+	if len(wp.Mu) != e.S {
+		return fmt.Errorf("swpub.Extractor.Witness: proof has %d μ values, want %d", len(wp.Mu), e.S)
+	}
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, e.ids, wc.C, bn256.Order)
+	rhs := make([]*big.Int, e.S)
+	for j, m := range wp.Mu {
+		rhs[j] = fixed32ToBig(m)
+	}
+	e.rows = append(e.rows, swPubRow{indices: indices, coeffs: coeffs, rhs: rhs})
+	return nil
+}
+
+// Extract solves for the original block values once the system is full-rank.
+// Returns ErrInsufficientProofs if more witnesses are needed.
+func (e *swPubExtractor) Extract() (blocks.BlockStore, error) {
+	N := len(e.ids)
+	S := e.S
+	P := bn256.Order
+	if N == 0 {
+		return blocks.NewMemStore(nil), nil
+	}
+
+	aug := make([][]*big.Int, len(e.rows))
+	for r, row := range e.rows {
+		aug[r] = make([]*big.Int, N+1)
+		for k := range aug[r] {
+			aug[r][k] = new(big.Int)
+		}
+		for k, idx := range row.indices {
+			aug[r][idx] = new(big.Int).Set(row.coeffs[k])
+		}
+	}
+
+	sectorVals := make([][]*big.Int, N)
+	for i := range N {
+		sectorVals[i] = make([]*big.Int, S)
+	}
+	for j := range S {
+		for r, row := range e.rows {
+			aug[r][N] = new(big.Int).Set(row.rhs[j])
+		}
+		sol := line.GaussElimModP(aug, N, P)
+		if sol == nil {
+			return nil, line.ErrInsufficientProofs
+		}
+		for i := range N {
+			sectorVals[i][j] = sol[i]
+		}
+	}
+
+	sectorSize := (e.blockLen + S - 1) / S
+	reconstructed := make([][]byte, N)
+	for i := range N {
+		block := make([]byte, e.blockLen)
+		for j := range S {
+			start := j * sectorSize
+			end := start + sectorSize
+			if end > e.blockLen {
+				end = e.blockLen
+			}
+			size := end - start
+			b := sectorVals[i][j].Bytes()
+			if len(b) > size {
+				b = b[len(b)-size:]
+			}
+			copy(block[end-len(b):end], b)
+		}
+		reconstructed[i] = block
+	}
+	return blocks.NewMemStore(reconstructed), nil
+}

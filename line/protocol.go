@@ -6,7 +6,15 @@
 // can evolve independently of the protocol logic.
 package line
 
-import "github.com/pinionengineering/storage-proofs/blocks"
+import (
+	"errors"
+
+	"github.com/pinionengineering/storage-proofs/blocks"
+)
+
+// ErrInsufficientProofs is returned by Extractor.Extract when not enough
+// challenge-proof pairs have been witnessed to recover the full file.
+var ErrInsufficientProofs = errors.New("insufficient proofs for extraction")
 
 // Tag is opaque per-block authentication metadata produced by a Tagger.
 type Tag []byte
@@ -45,10 +53,13 @@ type Validator interface {
 	Verify(chal Challenge, proof Proof) (bool, error)
 }
 
-// Extractor recovers the original file blocks from a server that answers
-// sufficiently many challenges honestly. Only POR protocols implement this.
+// Extractor recovers the original file by accumulating witnessed challenge-proof
+// transcripts. Call Witness for each valid (challenge, proof) pair observed;
+// the caller is responsible for verifying proofs before passing them. Call
+// Extract once enough transcripts have been collected.
 type Extractor interface {
-	Extract(store blocks.BlockStore) (blocks.BlockStore, error)
+	Witness(chal Challenge, proof Proof) error
+	Extract() (blocks.BlockStore, error)
 }
 
 // ExtractorProducer is implemented by Taggers that support file extraction.

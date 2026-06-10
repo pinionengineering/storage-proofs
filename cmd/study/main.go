@@ -40,6 +40,10 @@ const (
 	detKeyBits = 128
 	detTrials  = 30
 
+	// extraction sweep
+	extractMaxRound = 600 // generous margin over E[witnesses]≈236 for N=100 BJO
+	extractReps     = 3
+
 	// BJO detection uses smaller parameters for speed
 	detBJONData  = 40
 	detBJOV      = 10
@@ -48,8 +52,9 @@ const (
 )
 
 var (
-	keySweepBits = []int{128, 512, 1024}
-	fileSweepN   = []int{20, 40, 80, 200}
+	keySweepBits  = []int{128, 512, 1024}
+	fileSweepN    = []int{20, 40, 80, 200}
+	extractSweepN = []int{10, 20, 30, 40, 60, 80, 100}
 	chalSweepC   = []int{1, 5, 10, 20, 40}
 	detFValues   = []float64{0.01, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50}
 
@@ -106,6 +111,7 @@ type Charts struct {
 	ProofBytes LineChart      `json:"proofBytes"`
 	KeySweep   LineChart      `json:"keySweep"`
 	Detection  LineChart      `json:"detection"`
+	Extraction LineChart      `json:"extraction"`
 	SuiteSweep SuiteSweepData `json:"suiteSweep"`
 }
 
@@ -113,6 +119,7 @@ type SchemeCapability struct {
 	Name         string `json:"name"`
 	Color        string `json:"color"`
 	SparseBlocks bool   `json:"sparse_blocks"`
+	Extraction   bool   `json:"extraction"`
 }
 
 type StudyData struct {
@@ -132,7 +139,8 @@ func main() {
 	}
 	caps := make([]SchemeCapability, len(schemes))
 	for i, sch := range schemes {
-		caps[i] = SchemeCapability{Name: sch.Name, Color: sch.color, SparseBlocks: sch.Cap.SparseBlocks}
+		caps[i] = SchemeCapability{Name: sch.Name, Color: sch.color,
+			SparseBlocks: sch.Cap.SparseBlocks, Extraction: sch.Cap.Extraction}
 	}
 	data := StudyData{Date: time.Now().Format("2006-01-02"), Charts: *charts, Capabilities: caps}
 	jsonBytes, err := json.Marshal(data)

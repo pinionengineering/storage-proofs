@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
@@ -213,6 +214,16 @@ func runSweep() (*Charts, error) {
 		return nil, err
 	}
 
+	// -----------------------------------------------------------------------
+	// Extraction sweep: count witnesses needed to recover the file passively.
+	// Only SW-Priv and BJO support extraction.
+	// -----------------------------------------------------------------------
+	fmt.Println("extraction sweep...")
+	extractChart, err := sweepExtraction()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Charts{
 		TagTime:    tagChart,
 		ProveTime:  proveChart,
@@ -221,6 +232,7 @@ func runSweep() (*Charts, error) {
 		ProofBytes: proofChart,
 		KeySweep:   keyChart,
 		Detection:  detChart,
+		Extraction: extractChart,
 		SuiteSweep: suiteSweep,
 	}, nil
 }
@@ -353,4 +365,106 @@ func sweepDetection() (LineChart, error) {
 		series = append(series, Series{Label: entry.name + " (theory)", Color: entry.color, Dash: true, Points: theory})
 	}
 	return LineChart{XLabel: "Corruption fraction (f)", YLabel: "Detection probability", Series: series}, nil
+}
+
+// sweepExtraction counts how many valid witnesses are needed to passively
+// extract the original file, averaged over extractReps trials, for each scheme
+// that declares Cap.Extraction. The theory curve uses the generalized coupon
+// collector formula E = N·H_N / L.
+func sweepExtraction() (LineChart, error) {
+	var series []Series
+	for _, sch := range schemes {
+		if !sch.Cap.Extraction {
+			continue
+		}
+		var measured, theory []Point
+		for _, n := range extractSweepN {
+			store := blockspkg.NewMemStore(randomBlocks(n))
+			var total int
+			for range extractReps {
+				count, err := countExtractionWitnesses(sch, store)
+				if err != nil {
+					return LineChart{}, fmt.Errorf("%s extraction n=%d: %w", sch.Name, n, err)
+				}
+				total += count
+			}
+			measured = append(measured, Point{float64(n), float64(total) / float64(extractReps)})
+
+			// BJO's unknowns are the t inner-encoded blocks, not the n file blocks.
+			theoryN := n
+			if sch.Name == "BJO" {
+				theoryN = bjoEncodedBlocks(n, bjoOuterN, bjoOuterK)
+			}
+			theory = append(theory, Point{float64(n), extractionProofsExpected(theoryN, fixedChalSize)})
+		}
+		series = append(series, Series{Label: sch.Name, Color: sch.color, Points: measured})
+		series = append(series, Series{Label: sch.Name + " (theory)", Color: sch.color, Dash: true, Points: theory})
+	}
+	return LineChart{XLabel: "File blocks (N)", YLabel: "Witnesses to extract", Series: series}, nil
+}
+
+// countExtractionWitnesses runs one passive extraction trial: it drives
+// challenge-response rounds and counts how many valid witnesses were required
+// before Extract() succeeded.
+func countExtractionWitnesses(sch schemeSpec, store blockspkg.BlockStore) (int, error) {
+	tagger, err := sch.NewTagger(fixedKeyBits, fixedChalSize)
+	if err != nil {
+		return 0, err
+	}
+	if _, err = tagger.TagBlocks(store); err != nil {
+		return 0, err
+	}
+	ep, ok := tagger.(line.ExtractorProducer)
+	if !ok {
+		return 0, fmt.Errorf("%s: does not implement ExtractorProducer", sch.Name)
+	}
+	extractor, err := ep.NewExtractor()
+	if err != nil {
+		return 0, err
+	}
+	proverSetup, err := tagger.ProverSetup()
+	if err != nil {
+		return 0, err
+	}
+	clientSetup, err := tagger.ClientSetup()
+	if err != nil {
+		return 0, err
+	}
+	encoded := tagger.EncodedBlocks()
+	challenger, err := sch.ChalFactory.NewChallenger(clientSetup, fixedChalSize)
+	if err != nil {
+		return 0, err
+	}
+	prover, err := sch.ProvFactory.NewProver(proverSetup, encoded)
+	if err != nil {
+		return 0, err
+	}
+
+	witnesses := 0
+	for range extractMaxRound {
+		chal, validator, err := challenger.Challenge(encoded.IDs())
+		if err != nil {
+			return 0, err
+		}
+		proof, err := prover.Prove(chal, encoded)
+		if err != nil {
+			return 0, err
+		}
+		valid, err := validator.Verify(chal, proof)
+		if err != nil {
+			return 0, err
+		}
+		if valid {
+			if err := extractor.Witness(chal, proof); err != nil {
+				return 0, err
+			}
+			witnesses++
+		}
+		if _, err := extractor.Extract(); err == nil {
+			return witnesses, nil
+		} else if !errors.Is(err, line.ErrInsufficientProofs) {
+			return 0, err
+		}
+	}
+	return 0, fmt.Errorf("%s: extraction did not converge within %d rounds", sch.Name, extractMaxRound)
 }

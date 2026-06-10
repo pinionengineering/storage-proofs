@@ -174,7 +174,7 @@ func KeyGen(params *Params) (*SecretKey, error) {
 // The client uploads the file and tags to the server, then discards both,
 // retaining only sk.
 //
-// σ_i = PRF_K(i) mod P + Σ_{j=1}^S f_{i,j}·α_j  mod P
+// σ_i = PRF_K(id_i) mod P + Σ_{j=1}^S f_{i,j}·α_j  mod P
 func TagBlocks(s *suite.Suite, sk *SecretKey, store blocks.BlockStore) ([]*Tag, error) {
 	p := sk.Params
 	n := store.Len()
@@ -184,7 +184,7 @@ func TagBlocks(s *suite.Suite, sk *SecretKey, store blocks.BlockStore) ([]*Tag, 
 		if err != nil {
 			return nil, fmt.Errorf("sw.TagBlocks: block %d: %w", i, err)
 		}
-		sigma := new(big.Int).Mod(s.PRF(sk.K, blocks.IDInt(id)), p.P)
+		sigma := new(big.Int).Mod(s.PRFBytes(sk.K, id), p.P)
 		for j := range p.S {
 			fij := sectorElem(block, j, p.S, p.P)
 			sigma.Add(sigma, new(big.Int).Mul(fij, sk.Alpha[j]))
@@ -288,11 +288,8 @@ func Respond(params *Params, store blocks.BlockStore, tags []*Tag, chal *Challen
 
 // Verify checks whether the server's proof is valid.
 //
-// ids is store.IDs() from the audited store; it is used to derive the PRF
-// input for each challenged block via IDInt(ids[idx]), matching what TagBlocks
-// computed at setup. For standard sequential stores IDInt(ids[idx]) == idx, so
-// behavior is unchanged. For stores with arbitrary IDs the caller must pass the
-// same IDs that were present during TagBlocks.
+// ids is store.IDs() from the audited store. The PRF input for each challenged
+// block is its raw identifier bytes ids[idx], matching what TagBlocks computed.
 //
 // §3: "σ == Σ_t ν_t·PRF_K(i_t) + Σ_j μ_j·α_j  mod P"
 func Verify(s *suite.Suite, sk *SecretKey, ids [][]byte, chal *Challenge, proof *Proof) (bool, error) {
@@ -305,10 +302,10 @@ func Verify(s *suite.Suite, sk *SecretKey, ids [][]byte, chal *Challenge, proof 
 
 	expected := big.NewInt(0)
 
-	// Σ_t ν_t · PRF_K(i_t) mod P — i_t matches TagBlocks which uses IDInt(id).
+	// Σ_t ν_t · PRF_K(id_t) mod P
 	for t, idx := range chal.Indices {
 		nu := chal.Coeffs[t]
-		prf := new(big.Int).Mod(s.PRF(sk.K, blocks.IDInt(ids[idx])), P)
+		prf := new(big.Int).Mod(s.PRFBytes(sk.K, ids[idx]), P)
 		expected.Add(expected, new(big.Int).Mul(nu, prf))
 		expected.Mod(expected, P)
 	}
