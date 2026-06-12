@@ -15,6 +15,7 @@ package pdp
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"math/big"
 )
@@ -27,6 +28,31 @@ import (
 type PublicKey struct {
 	N *big.Int
 	G *big.Int
+}
+
+// MarshalJSON implements json.Marshaler. Encodes N and G as big-endian bytes.
+// References: §4.3 Ateniese et al. CCS 2007, §4.1 Erway et al. CCS 2009.
+func (pk PublicKey) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		N []byte `json:"n"`
+		G []byte `json:"g"`
+	}
+	return json.Marshal(wire{N: pk.N.Bytes(), G: pk.G.Bytes()})
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (pk *PublicKey) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		N []byte `json:"n"`
+		G []byte `json:"g"`
+	}
+	var w wire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return fmt.Errorf("pdp.PublicKey: %w", err)
+	}
+	pk.N = new(big.Int).SetBytes(w.N)
+	pk.G = new(big.Int).SetBytes(w.G)
+	return nil
 }
 
 // MakePublicKey generates a fresh RSA group over safe primes.

@@ -72,6 +72,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"math/big"
 
@@ -205,6 +206,37 @@ func KeyGen(k int) (pk *pdp.PublicKey, sk *SecretKey, err error) {
 	pk = &pdp.PublicKey{N: N, G: g}
 	sk = &SecretKey{E: e, D: d, V: v, Phi: phi}
 	return pk, sk, nil
+}
+
+// MarshalJSON implements json.Marshaler. Encodes E, D, V, Phi as big-endian bytes.
+// Reference: §4.3 Ateniese et al., CCS 2007 (KeyGen output: e, d, v, phi).
+func (sk SecretKey) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		E   []byte `json:"e"`
+		D   []byte `json:"d"`
+		V   []byte `json:"v"`
+		Phi []byte `json:"phi"`
+	}
+	return json.Marshal(wire{E: sk.E.Bytes(), D: sk.D.Bytes(), V: sk.V, Phi: sk.Phi.Bytes()})
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (sk *SecretKey) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		E   []byte `json:"e"`
+		D   []byte `json:"d"`
+		V   []byte `json:"v"`
+		Phi []byte `json:"phi"`
+	}
+	var w wire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return fmt.Errorf("ateniese.SecretKey: %w", err)
+	}
+	sk.E = new(big.Int).SetBytes(w.E)
+	sk.D = new(big.Int).SetBytes(w.D)
+	sk.V = w.V
+	sk.Phi = new(big.Int).SetBytes(w.Phi)
+	return nil
 }
 
 // ---------------------------------------------------------------------------

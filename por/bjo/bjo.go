@@ -107,6 +107,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math/big"
 
@@ -778,6 +779,92 @@ func KeyGen(params *Params) (*MasterKey, error) {
 		KECCEnc:  deriveKey(ms, "keccenc"),
 		Params:   &p,
 	}, nil
+}
+
+// MarshalJSON implements json.Marshaler. Encodes all sub-keys and Params.
+// Reference: §4.2.1 Bowers, Juels, Oprea (KeyGen output: all derived sub-keys and parameters).
+func (mk MasterKey) MarshalJSON() ([]byte, error) {
+	type wireParams struct {
+		V      int     `json:"v"`
+		W      int     `json:"w"`
+		Q      int     `json:"q"`
+		P      []byte  `json:"p"`
+		GSeed  []byte  `json:"gseed"`
+		OuterN int     `json:"outer_n"`
+		OuterK int     `json:"outer_k"`
+		Alpha  int     `json:"alpha"`
+		Delta  float64 `json:"delta"`
+	}
+	type wire struct {
+		KChal    []byte     `json:"kchal"`
+		KInd     []byte     `json:"kind"`
+		KMACFile []byte     `json:"kmacfile"`
+		KEnc     []byte     `json:"kenc"`
+		KPerm    []byte     `json:"kperm"`
+		KECCPerm []byte     `json:"keccperm"`
+		KECCEnc  []byte     `json:"keccenc"`
+		Params   wireParams `json:"params"`
+	}
+	p := mk.Params
+	return json.Marshal(wire{
+		KChal:    mk.KChal,
+		KInd:     mk.KInd,
+		KMACFile: mk.KMACFile,
+		KEnc:     mk.KEnc,
+		KPerm:    mk.KPerm,
+		KECCPerm: mk.KECCPerm,
+		KECCEnc:  mk.KECCEnc,
+		Params: wireParams{
+			V: p.V, W: p.W, Q: p.Q,
+			P: p.P.Bytes(), GSeed: p.GSeed,
+			OuterN: p.OuterN, OuterK: p.OuterK,
+			Alpha: p.Alpha, Delta: p.Delta,
+		},
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (mk *MasterKey) UnmarshalJSON(data []byte) error {
+	type wireParams struct {
+		V      int     `json:"v"`
+		W      int     `json:"w"`
+		Q      int     `json:"q"`
+		P      []byte  `json:"p"`
+		GSeed  []byte  `json:"gseed"`
+		OuterN int     `json:"outer_n"`
+		OuterK int     `json:"outer_k"`
+		Alpha  int     `json:"alpha"`
+		Delta  float64 `json:"delta"`
+	}
+	type wire struct {
+		KChal    []byte     `json:"kchal"`
+		KInd     []byte     `json:"kind"`
+		KMACFile []byte     `json:"kmacfile"`
+		KEnc     []byte     `json:"kenc"`
+		KPerm    []byte     `json:"kperm"`
+		KECCPerm []byte     `json:"keccperm"`
+		KECCEnc  []byte     `json:"keccenc"`
+		Params   wireParams `json:"params"`
+	}
+	var w wire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return fmt.Errorf("bjo.MasterKey: %w", err)
+	}
+	mk.KChal = w.KChal
+	mk.KInd = w.KInd
+	mk.KMACFile = w.KMACFile
+	mk.KEnc = w.KEnc
+	mk.KPerm = w.KPerm
+	mk.KECCPerm = w.KECCPerm
+	mk.KECCEnc = w.KECCEnc
+	mk.Params = &Params{
+		V: w.Params.V, W: w.Params.W, Q: w.Params.Q,
+		P:      new(big.Int).SetBytes(w.Params.P),
+		GSeed:  w.Params.GSeed,
+		OuterN: w.Params.OuterN, OuterK: w.Params.OuterK,
+		Alpha:  w.Params.Alpha, Delta: w.Params.Delta,
+	}
+	return nil
 }
 
 // Encode applies SA-ECC to file F and precomputes Q sentinel values.

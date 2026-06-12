@@ -126,6 +126,10 @@ func (t *Tagger) ProverSetup() ([]byte, error) {
 // EncodedBlocks returns the original store; SW-Pub does not transform blocks.
 func (t *Tagger) EncodedBlocks() blocks.BlockStore { return t.store }
 
+// PubScheme returns the underlying PubScheme for key serialization.
+// Used by the capability layer to marshal/unmarshal the full key for GCS storage.
+func (t *Tagger) PubScheme() *porsw.PubScheme { return t.ps }
+
 // ---------------------------------------------------------------------------
 // ChallengerFactory
 // ---------------------------------------------------------------------------

@@ -271,7 +271,9 @@ func (t *Tagger) ClientSetup() ([]byte, error) {
 	})
 }
 
-func (t *Tagger) EncodedBlocks() blocks.BlockStore { return t.store }
+func (t *Tagger) EncodedBlocks() blocks.BlockStore        { return t.store }
+func (t *Tagger) PublicKey() *pdp.PublicKey               { return t.pk }
+func (t *Tagger) SecretKey() *pdpateniese.SecretKey       { return t.sk }
 
 // ---------------------------------------------------------------------------
 // ChallengerFactory

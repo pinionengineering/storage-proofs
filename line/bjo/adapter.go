@@ -118,7 +118,8 @@ func (t *Tagger) Sentinels() [][]byte { return t.ef.Sentinels }
 
 // EncodedBlocks returns the full encoded block store (original + parity).
 // The server stores these as the file it audits.
-func (t *Tagger) EncodedBlocks() blocks.BlockStore { return blocks.NewMemStore(t.ef.Blocks) }
+func (t *Tagger) EncodedBlocks() blocks.BlockStore    { return blocks.NewMemStore(t.ef.Blocks) }
+func (t *Tagger) MasterKey() *porbjo.MasterKey        { return t.mk }
 
 // ---------------------------------------------------------------------------
 // SetupProducer (Tagger implements line.SetupProducer)

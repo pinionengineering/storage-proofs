@@ -181,6 +181,7 @@ func (t *Tagger) ClientSetup() ([]byte, error) {
 }
 
 func (t *Tagger) EncodedBlocks() blocks.BlockStore { return t.store }
+func (t *Tagger) PublicKey() *pdp.PublicKey        { return t.pk }
 
 // ---------------------------------------------------------------------------
 // ChallengerFactory

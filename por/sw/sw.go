@@ -59,6 +59,7 @@ package sw
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"math/big"
 
@@ -167,6 +168,50 @@ func KeyGen(params *Params) (*SecretKey, error) {
 	}
 
 	return &SecretKey{K: k, Alpha: alpha, Params: params}, nil
+}
+
+// MarshalJSON implements json.Marshaler. Encodes K, Alpha, and Params (S, L, P)
+// as needed to reconstitute the full key. Reference: §3.2 Shacham-Waters ASIACRYPT 2008,
+// Gen: K ∈ {0,1}^κ, α_1,...,α_S ← Z_P.
+func (sk SecretKey) MarshalJSON() ([]byte, error) {
+	alpha := make([][]byte, len(sk.Alpha))
+	for j, a := range sk.Alpha {
+		alpha[j] = a.Bytes()
+	}
+	type wire struct {
+		S     int      `json:"s"`
+		L     int      `json:"l"`
+		P     []byte   `json:"p"`
+		K     []byte   `json:"k"`
+		Alpha [][]byte `json:"alpha"`
+	}
+	return json.Marshal(wire{
+		S: sk.Params.S, L: sk.Params.L,
+		P: sk.Params.P.Bytes(), K: sk.K, Alpha: alpha,
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (sk *SecretKey) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		S     int      `json:"s"`
+		L     int      `json:"l"`
+		P     []byte   `json:"p"`
+		K     []byte   `json:"k"`
+		Alpha [][]byte `json:"alpha"`
+	}
+	var w wire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return fmt.Errorf("sw.SecretKey: %w", err)
+	}
+	alpha := make([]*big.Int, len(w.Alpha))
+	for j, ab := range w.Alpha {
+		alpha[j] = new(big.Int).SetBytes(ab)
+	}
+	sk.K = w.K
+	sk.Alpha = alpha
+	sk.Params = &Params{S: w.S, L: w.L, P: new(big.Int).SetBytes(w.P)}
+	return nil
 }
 
 // TagBlocks computes one Tag per block and returns them in order.

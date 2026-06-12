@@ -42,6 +42,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"math/big"
 
@@ -110,6 +111,66 @@ func (ps *PubScheme) PubKey() *PubPublicKey { return ps.pk }
 func (ps *PubScheme) Kind() SchemeKind { return PubKind }
 func (ps *PubScheme) S() int           { return ps.s }
 func (ps *PubScheme) L() int           { return ps.l }
+
+// MarshalJSON implements json.Marshaler. Includes the secret α (fixed 32-byte
+// big-endian), public key (v, u₁,...,uₛ, name), and scheme parameters (s, l).
+// Reference: §3.3 Shacham-Waters ASIACRYPT 2008, Gen: α ∈ Z_q, v = α·G₂, uⱼ ∈ G₁, λ.
+func (ps PubScheme) MarshalJSON() ([]byte, error) {
+	u := make([][]byte, len(ps.pk.U))
+	for j, uj := range ps.pk.U {
+		u[j] = uj.Marshal()
+	}
+	type wire struct {
+		S     int      `json:"s"`
+		L     int      `json:"l"`
+		Name  []byte   `json:"name"`
+		V     []byte   `json:"v"`
+		U     [][]byte `json:"u"`
+		Alpha []byte   `json:"alpha"` // secret α, fixed 32-byte big-endian
+	}
+	ab := ps.alpha.Bytes()
+	fixed := make([]byte, 32)
+	copy(fixed[32-len(ab):], ab)
+	return json.Marshal(wire{
+		S: ps.s, L: ps.l,
+		Name:  ps.pk.Name,
+		V:     ps.pk.V.Marshal(),
+		U:     u,
+		Alpha: fixed,
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (ps *PubScheme) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		S     int      `json:"s"`
+		L     int      `json:"l"`
+		Name  []byte   `json:"name"`
+		V     []byte   `json:"v"`
+		U     [][]byte `json:"u"`
+		Alpha []byte   `json:"alpha"`
+	}
+	var w wire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return fmt.Errorf("sw.PubScheme: %w", err)
+	}
+	v := new(bn256.G2)
+	if _, err := v.Unmarshal(w.V); err != nil {
+		return fmt.Errorf("sw.PubScheme: V: %w", err)
+	}
+	u := make([]*bn256.G1, len(w.U))
+	for j, raw := range w.U {
+		u[j] = new(bn256.G1)
+		if _, err := u[j].Unmarshal(raw); err != nil {
+			return fmt.Errorf("sw.PubScheme: U[%d]: %w", j, err)
+		}
+	}
+	ps.alpha = new(big.Int).SetBytes(w.Alpha)
+	ps.pk = &PubPublicKey{Name: w.Name, V: v, U: u}
+	ps.s = w.S
+	ps.l = w.L
+	return nil
+}
 
 // NewPubSchemeFromKey reconstructs a PubScheme from existing key material
 // without generating a new keypair. Used by protocol adapters that rebuild

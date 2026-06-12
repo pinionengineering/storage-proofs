@@ -119,6 +119,10 @@ func (t *Tagger) ClientSetup() ([]byte, error) {
 
 func (t *Tagger) EncodedBlocks() blocks.BlockStore { return t.store }
 
+// SecretKey returns the underlying SecretKey for key serialization.
+// Used by the capability layer to marshal/unmarshal the full key for GCS storage.
+func (t *Tagger) SecretKey() *porsw.SecretKey { return t.sk }
+
 // NewExtractor implements line.ExtractorProducer. Must be called after TagBlocks.
 // The extractor accumulates witnessed (challenge, proof) pairs; once it has
 // enough linearly independent equations it can recover the original file blocks.
