@@ -2,7 +2,7 @@
 //
 // Unlike the §3.2 private-key scheme, anyone who holds the public key can
 // verify that the server stores the file. Verification requires evaluating two
-// Ate pairings over BN256, which is ~100–1000× slower than Z_p arithmetic.
+// Ate pairings over BN254 (Ethereum alt_bn128).
 //
 // # Protocol
 //
@@ -39,16 +39,18 @@
 package sw
 
 import (
-	"bytes"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"math/big"
 
-	"github.com/cloudflare/bn256"
+	"github.com/consensys/gnark-crypto/ecc/bn254"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/pinionengineering/storage-proofs/blocks"
 )
+
+// bn254Order is the BN254 (alt_bn128) group order, cached at package init.
+var bn254Order = fr.Modulus()
 
 // PubPublicKey is the public key for the §3.3 BLS-based scheme.
 // It is sufficient for verification; the secret scalar α is never included.
@@ -58,11 +60,11 @@ type PubPublicKey struct {
 	Name []byte
 
 	// V = α·G₂ is the public verification key derived from the secret α.
-	V *bn256.G2
+	V bn254.G2Affine
 
 	// U[j] = r_j·G₁ for j = 0,...,S-1. The scalars r_j are drawn at KeyGen
 	// and immediately discarded; no one knows their discrete logs afterwards.
-	U []*bn256.G1
+	U []bn254.G1Affine
 }
 
 // PubScheme implements the §3.3 public-key SW scheme as a Scheme.
@@ -75,20 +77,20 @@ type PubScheme struct {
 
 // NewPubScheme generates a fresh PubScheme: secret α, public (v, u₁,...,uₛ, λ).
 func NewPubScheme(s, l int) (*PubScheme, error) {
-	// Secret scalar α; v = α·G₂.
-	alpha, v, err := bn256.RandomG2(rand.Reader)
+	alpha, err := rand.Int(rand.Reader, bn254Order)
 	if err != nil {
 		return nil, fmt.Errorf("sw.NewPubScheme: alpha: %w", err)
 	}
+	var v bn254.G2Affine
+	v.ScalarMultiplicationBase(alpha)
 
-	// u_j: random G₁ elements; the generating scalars are discarded.
-	u := make([]*bn256.G1, s)
+	u := make([]bn254.G1Affine, s)
 	for j := range s {
-		_, uj, err := bn256.RandomG1(rand.Reader)
+		r, err := rand.Int(rand.Reader, bn254Order)
 		if err != nil {
 			return nil, fmt.Errorf("sw.NewPubScheme: u[%d]: %w", j, err)
 		}
-		u[j] = uj
+		u[j].ScalarMultiplicationBase(r)
 	}
 
 	name := make([]byte, 16)
@@ -104,8 +106,7 @@ func NewPubScheme(s, l int) (*PubScheme, error) {
 	}, nil
 }
 
-// PubKey returns the public key. It is the only information required for
-// verification; callers can distribute it to any auditor.
+// PubKey returns the public key.
 func (ps *PubScheme) PubKey() *PubPublicKey { return ps.pk }
 
 func (ps *PubScheme) Kind() SchemeKind { return PubKind }
@@ -114,12 +115,13 @@ func (ps *PubScheme) L() int           { return ps.l }
 
 // MarshalJSON implements json.Marshaler. Includes the secret α (fixed 32-byte
 // big-endian), public key (v, u₁,...,uₛ, name), and scheme parameters (s, l).
-// Reference: §3.3 Shacham-Waters ASIACRYPT 2008, Gen: α ∈ Z_q, v = α·G₂, uⱼ ∈ G₁, λ.
 func (ps PubScheme) MarshalJSON() ([]byte, error) {
 	u := make([][]byte, len(ps.pk.U))
-	for j, uj := range ps.pk.U {
-		u[j] = uj.Marshal()
+	for j := range ps.pk.U {
+		raw := ps.pk.U[j].RawBytes()
+		u[j] = raw[:]
 	}
+	vRaw := ps.pk.V.RawBytes()
 	type wire struct {
 		S     int      `json:"s"`
 		L     int      `json:"l"`
@@ -134,7 +136,7 @@ func (ps PubScheme) MarshalJSON() ([]byte, error) {
 	return json.Marshal(wire{
 		S: ps.s, L: ps.l,
 		Name:  ps.pk.Name,
-		V:     ps.pk.V.Marshal(),
+		V:     vRaw[:],
 		U:     u,
 		Alpha: fixed,
 	})
@@ -154,14 +156,13 @@ func (ps *PubScheme) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &w); err != nil {
 		return fmt.Errorf("sw.PubScheme: %w", err)
 	}
-	v := new(bn256.G2)
-	if _, err := v.Unmarshal(w.V); err != nil {
+	var v bn254.G2Affine
+	if _, err := v.SetBytes(w.V); err != nil {
 		return fmt.Errorf("sw.PubScheme: V: %w", err)
 	}
-	u := make([]*bn256.G1, len(w.U))
+	u := make([]bn254.G1Affine, len(w.U))
 	for j, raw := range w.U {
-		u[j] = new(bn256.G1)
-		if _, err := u[j].Unmarshal(raw); err != nil {
+		if _, err := u[j].SetBytes(raw); err != nil {
 			return fmt.Errorf("sw.PubScheme: U[%d]: %w", j, err)
 		}
 	}
@@ -180,16 +181,18 @@ func NewPubSchemeFromKey(pk *PubPublicKey, s, l int) *PubScheme {
 	return &PubScheme{pk: pk, s: s, l: l}
 }
 
-// pubHashG1 returns H(data) = SHA-256(data) mod q · G₁ ∈ G₁.
-func pubHashG1(data []byte) *bn256.G1 {
-	h := sha256.Sum256(data)
-	k := new(big.Int).SetBytes(h[:])
-	k.Mod(k, bn256.Order)
-	return new(bn256.G1).ScalarBaseMult(k)
+// pubHashDST is the RFC 9380 domain separation tag for the SW §3.3 hash-to-G₁
+// operation. Changing this value invalidates all previously stored tags.
+var pubHashDST = []byte("sw-pub-v1-BN254G1_XMD:SHA-256_SVDW_RO_")
+
+// pubHashG1 returns H(data) ∈ G₁ via the RFC 9380 hash-to-curve map (SVDW).
+// The output is indistinguishable from a uniform G₁ point (random oracle).
+func pubHashG1(data []byte) (bn254.G1Affine, error) {
+	return bn254.HashToG1(data, pubHashDST)
 }
 
-// blockHashG1 returns H(name‖id) ∈ G₁ for an arbitrary block identifier id ∈ {0,1}*.
-func blockHashG1(name, id []byte) *bn256.G1 {
+// blockHashG1 returns H(name‖id) ∈ G₁ for an arbitrary block identifier id.
+func blockHashG1(name, id []byte) (bn254.G1Affine, error) {
 	buf := make([]byte, len(name)+len(id))
 	copy(buf, name)
 	copy(buf[len(name):], id)
@@ -208,26 +211,33 @@ func pubSectorElem(block []byte, j, s int) *big.Int {
 	if end > n {
 		end = n
 	}
-	return new(big.Int).Mod(new(big.Int).SetBytes(block[start:end]), bn256.Order)
+	return new(big.Int).Mod(new(big.Int).SetBytes(block[start:end]), bn254Order)
 }
 
 // TagBlocks computes σ_i = α·(H(Name‖id_i) + Σ_j f_{i,j}·u_j) ∈ G₁ for each block.
 // Each tag is marshalled as 64 bytes (uncompressed G₁ point).
 func (ps *PubScheme) TagBlocks(store blocks.BlockStore) ([][]byte, error) {
 	ids := store.IDs()
-	n := len(ids)
-	out := make([][]byte, n)
+	out := make([][]byte, len(ids))
 	for i, id := range ids {
 		block, err := store.Block(id)
 		if err != nil {
 			return nil, fmt.Errorf("sw.PubScheme.TagBlocks: block %d: %w", i, err)
 		}
-		acc := blockHashG1(ps.pk.Name, id)
+		acc, err := blockHashG1(ps.pk.Name, id)
+		if err != nil {
+			return nil, fmt.Errorf("sw.PubScheme.TagBlocks: hash block %d: %w", i, err)
+		}
 		for j := range ps.s {
 			fij := pubSectorElem(block, j, ps.s)
-			acc = new(bn256.G1).Add(acc, new(bn256.G1).ScalarMult(ps.pk.U[j], fij))
+			var term bn254.G1Affine
+			term.ScalarMultiplication(&ps.pk.U[j], fij)
+			acc.Add(&acc, &term)
 		}
-		out[i] = new(bn256.G1).ScalarMult(acc, ps.alpha).Marshal()
+		var tag bn254.G1Affine
+		tag.ScalarMultiplication(&acc, ps.alpha)
+		raw := tag.RawBytes()
+		out[i] = raw[:]
 	}
 	return out, nil
 }
@@ -264,7 +274,7 @@ func (ps *PubScheme) MakeChallenge(ids [][]byte) (*SWChallenge, error) {
 
 	coeffs := make([]*big.Int, l)
 	for t := range l {
-		v, err := rand.Int(rand.Reader, bn256.Order)
+		v, err := rand.Int(rand.Reader, bn254Order)
 		if err != nil {
 			return nil, fmt.Errorf("sw.PubScheme.MakeChallenge: coeff %d: %w", t, err)
 		}
@@ -288,24 +298,20 @@ func (ps *PubScheme) RespondFetch(tags [][]byte, chal *SWChallenge, store blocks
 		mu[j] = big.NewInt(0)
 	}
 
-	var sigmaAcc *bn256.G1
+	var sigmaAcc bn254.G1Affine // zero value = identity
 	for t, idx := range chal.Indices {
 		if idx < 0 || idx >= len(tags) {
 			return nil, fmt.Errorf("sw.PubScheme.RespondFetch: index %d out of range [0, %d)", idx, len(tags))
 		}
 		nu := chal.Coeffs[t]
 
-		tag := new(bn256.G1)
-		if _, err := tag.Unmarshal(tags[idx]); err != nil {
+		var tag bn254.G1Affine
+		if _, err := tag.SetBytes(tags[idx]); err != nil {
 			return nil, fmt.Errorf("sw.PubScheme.RespondFetch: tag[%d]: %w", idx, err)
 		}
-
-		term := new(bn256.G1).ScalarMult(tag, nu)
-		if sigmaAcc == nil {
-			sigmaAcc = term
-		} else {
-			sigmaAcc = new(bn256.G1).Add(sigmaAcc, term)
-		}
+		var term bn254.G1Affine
+		term.ScalarMultiplication(&tag, nu)
+		sigmaAcc.Add(&sigmaAcc, &term)
 
 		data, err := blocks.BlockAt(store, idx)
 		if err != nil {
@@ -314,65 +320,65 @@ func (ps *PubScheme) RespondFetch(tags [][]byte, chal *SWChallenge, store blocks
 		for j := range ps.s {
 			fij := pubSectorElem(data, j, ps.s)
 			mu[j].Add(mu[j], new(big.Int).Mul(nu, fij))
-			mu[j].Mod(mu[j], bn256.Order)
+			mu[j].Mod(mu[j], bn254Order)
 		}
 	}
 
-	return &SWProof{Sigma: sigmaAcc.Marshal(), Mu: mu}, nil
+	raw := sigmaAcc.RawBytes()
+	return &SWProof{Sigma: raw[:], Mu: mu}, nil
 }
 
 // Verify calls VerifyPub with the embedded public key.
-// ids is store.IDs() from the audited store; §3.3 uses them to compute H(λ‖id_t).
 func (ps *PubScheme) Verify(chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error) {
 	return VerifyPub(ps.pk, chal, proof, ids)
 }
 
-// verifyPubCore performs the pairing check e(σ, G₂) == e(A, v) where
-// A = Σ_t ν_t·H(Name‖id_t) + Σ_j μ_j·u_j  (§3.3).
-// ids is the ordered identifier list from store.IDs(); ids[chal.Indices[t]] gives id_t.
+// verifyPubCore performs the pairing check:
+//
+//	e(σ, G₂) == e(A, v)
+//
+// where A = Σ_t ν_t·H(Name‖id_t) + Σ_j μ_j·u_j. Implemented as
+// PairingCheck([σ, -A], [G₂, v]) == true for efficiency (one multi-pairing).
 func verifyPubCore(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error) {
 	if len(proof.Mu) != len(pk.U) {
 		return false, fmt.Errorf("sw.VerifyPub: proof has %d μ elements, want %d", len(proof.Mu), len(pk.U))
 	}
 
-	sigma := new(bn256.G1)
-	if _, err := sigma.Unmarshal(proof.Sigma); err != nil {
+	var sigma bn254.G1Affine
+	if _, err := sigma.SetBytes(proof.Sigma); err != nil {
 		return false, fmt.Errorf("sw.VerifyPub: sigma: %w", err)
 	}
 
 	// A = Σ_t ν_t·H(Name‖id_t) + Σ_j μ_j·u_j  ∈ G₁
-	var a *bn256.G1
+	var a bn254.G1Affine // zero = identity
 	for t, idx := range chal.Indices {
 		nu := chal.Coeffs[t]
-		term := new(bn256.G1).ScalarMult(blockHashG1(pk.Name, ids[idx]), nu)
-		if a == nil {
-			a = term
-		} else {
-			a = new(bn256.G1).Add(a, term)
+		h, err := blockHashG1(pk.Name, ids[idx])
+		if err != nil {
+			return false, fmt.Errorf("sw.VerifyPub: hash block %d: %w", idx, err)
 		}
+		var term bn254.G1Affine
+		term.ScalarMultiplication(&h, nu)
+		a.Add(&a, &term)
 	}
-	for j, uj := range pk.U {
-		term := new(bn256.G1).ScalarMult(uj, proof.Mu[j])
-		if a == nil {
-			a = term
-		} else {
-			a = new(bn256.G1).Add(a, term)
-		}
+	for j := range pk.U {
+		var term bn254.G1Affine
+		term.ScalarMultiplication(&pk.U[j], proof.Mu[j])
+		a.Add(&a, &term)
 	}
 
-	g2 := new(bn256.G2).ScalarBaseMult(big.NewInt(1))
-	lhs := bn256.Pair(sigma, g2)
-	rhs := bn256.Pair(a, pk.V)
-
-	return bytes.Equal(lhs.Marshal(), rhs.Marshal()), nil
+	var negA bn254.G1Affine
+	negA.Neg(&a)
+	_, _, _, g2Gen := bn254.Generators()
+	return bn254.PairingCheck(
+		[]bn254.G1Affine{sigma, negA},
+		[]bn254.G2Affine{g2Gen, pk.V},
+	)
 }
 
 // VerifyPub performs public verification given only the public key.
 // This is the distinguishing property of §3.3: anyone who holds pk can audit
 // the server without access to the secret scalar α.
-//
-// ids is the ordered identifier list from store.IDs() at audit time; it is
-// used to reconstruct H(λ‖id_t) = H(λ‖ids[i_t]) for each challenged position i_t.
 //
 // Checks: e(σ, G₂) == e(Σ_t ν_t·H(λ‖id_t) + Σ_j μ_j·u_j, v)
 func VerifyPub(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error) {

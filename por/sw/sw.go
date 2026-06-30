@@ -90,6 +90,21 @@ type Params struct {
 	P *big.Int
 }
 
+// ValidateP returns an error if P is too small for the extraction property.
+// P must exceed 2^{8·⌈blockSize/S⌉} so that every sector maps injectively
+// into Z_P. If only challenge/verify is needed (no extraction), this check is
+// informational but safe to enforce. Call with the actual block size before
+// TagBlocks; TagBlocks also calls this automatically on the first block.
+func (p *Params) ValidateP(blockSize int) error {
+	sectorSize := (blockSize + p.S - 1) / p.S
+	maxBits := sectorSize * 8
+	if p.P.BitLen() <= maxBits {
+		return fmt.Errorf("sw: P (%d bits) must be > 2^%d for %d-byte sectors with S=%d; increase P or S",
+			p.P.BitLen(), maxBits, sectorSize, p.S)
+	}
+	return nil
+}
+
 // SecretKey is the client's secret key. It is never transmitted to the server.
 type SecretKey struct {
 	// K is the PRF key. tagPRF(K, i) provides the pseudorandom per-block
@@ -228,6 +243,11 @@ func TagBlocks(s *suite.Suite, sk *SecretKey, store blocks.BlockStore) ([]*Tag, 
 		block, err := store.Block(id)
 		if err != nil {
 			return nil, fmt.Errorf("sw.TagBlocks: block %d: %w", i, err)
+		}
+		if i == 0 {
+			if err := p.ValidateP(len(block)); err != nil {
+				return nil, err
+			}
 		}
 		sigma := new(big.Int).Mod(s.PRFBytes(sk.K, id), p.P)
 		for j := range p.S {

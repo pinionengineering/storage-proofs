@@ -5,7 +5,6 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/cloudflare/bn256"
 	"github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
@@ -96,7 +95,7 @@ func TestVerifyPubTamperedMu(t *testing.T) {
 	proof, _ := ps.RespondFetch(tags, chal, store)
 
 	proof.Mu[0].Add(proof.Mu[0], big.NewInt(1))
-	proof.Mu[0].Mod(proof.Mu[0], bn256.Order)
+	proof.Mu[0].Mod(proof.Mu[0], bn254Order)
 
 	ok, err := VerifyPub(ps.PubKey(), chal, proof, ids)
 	if err != nil {

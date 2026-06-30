@@ -2,7 +2,7 @@
 // protocol interfaces. Challenges and proofs are JSON-encoded byte slices.
 //
 // Unlike the private-key variant (line/sw), any party holding the public key
-// can verify proofs. Verification uses two BN256 Ate pairings, which is
+// can verify proofs. Verification uses two BN254 Ate pairings, which is
 // significantly slower than the Z_p arithmetic in the private-key scheme.
 package swpub
 
@@ -12,12 +12,16 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/cloudflare/bn256"
+	"github.com/consensys/gnark-crypto/ecc/bn254"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/pinionengineering/storage-proofs/blocks"
 	"github.com/pinionengineering/storage-proofs/line"
 	porsw "github.com/pinionengineering/storage-proofs/por/sw"
 	"github.com/pinionengineering/storage-proofs/suite"
 )
+
+// bn254Order is the BN254 group order, used as the modulus for scalar arithmetic.
+var bn254Order = fr.Modulus()
 
 // ---------------------------------------------------------------------------
 // Wire types (JSON)
@@ -101,16 +105,18 @@ func (t *Tagger) TagBlocks(store blocks.BlockStore) ([]line.Tag, error) {
 func (t *Tagger) ClientSetup() ([]byte, error) {
 	pk := t.ps.PubKey()
 	u := make([][]byte, len(pk.U))
-	for j, uj := range pk.U {
-		u[j] = uj.Marshal()
+	for j := range pk.U {
+		raw := pk.U[j].RawBytes()
+		u[j] = raw[:]
 	}
+	vRaw := pk.V.RawBytes()
 	return json.Marshal(wireClientSetup{
 		Protocol: "swpub",
 		SuiteID:  t.s.ID(),
 		S:        t.ps.S(),
 		L:        t.ps.L(),
 		Name:     pk.Name,
-		V:        pk.V.Marshal(),
+		V:        vRaw[:],
 		U:        u,
 	})
 }
@@ -149,14 +155,13 @@ func (challengerFactory) NewChallenger(setup []byte, _ int) (line.Challenger, er
 	if !ok {
 		return nil, fmt.Errorf("swpub.NewChallenger: unknown suite %d", ws.SuiteID)
 	}
-	v := new(bn256.G2)
-	if _, err := v.Unmarshal(ws.V); err != nil {
+	var v bn254.G2Affine
+	if _, err := v.SetBytes(ws.V); err != nil {
 		return nil, fmt.Errorf("swpub.NewChallenger: V: %w", err)
 	}
-	u := make([]*bn256.G1, len(ws.U))
+	u := make([]bn254.G1Affine, len(ws.U))
 	for j, raw := range ws.U {
-		u[j] = new(bn256.G1)
-		if _, err := u[j].Unmarshal(raw); err != nil {
+		if _, err := u[j].SetBytes(raw); err != nil {
 			return nil, fmt.Errorf("swpub.NewChallenger: U[%d]: %w", j, err)
 		}
 	}
@@ -250,7 +255,7 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 	if !ok {
 		return nil, fmt.Errorf("swpub.Prove: unknown suite %d", wc.SuiteID)
 	}
-	indices, coeffs := line.DeriveChallenge(s, wc.Seed, store.IDs(), wc.C, bn256.Order)
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, store.IDs(), wc.C, bn254Order)
 	swChal := &porsw.SWChallenge{Kind: porsw.PubKind, Indices: indices, Coeffs: coeffs}
 	// RespondFetch only reads ps.s from the scheme; no keypair needed.
 	resp, err := porsw.NewPubSchemeFromKey(nil, p.s, 0).RespondFetch(p.tags, swChal, store)
@@ -289,7 +294,7 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 	if !ok {
 		return false, fmt.Errorf("swpub.Verify: unknown suite %d", wc.SuiteID)
 	}
-	indices, coeffs := line.DeriveChallenge(s, wc.Seed, v.ids, wc.C, bn256.Order)
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, v.ids, wc.C, bn254Order)
 	var wp wireProof
 	if err := json.Unmarshal(proof, &wp); err != nil {
 		return false, fmt.Errorf("swpub.Verify: proof: %w", err)
@@ -333,7 +338,7 @@ type swPubRow struct {
 
 // swPubExtractor implements line.Extractor for the SW public-key scheme.
 // Extraction uses the same Gaussian elimination as the private-key scheme;
-// the only difference is that the modulus is bn256.Order instead of swP, since
+// the only difference is that the modulus is bn254Order instead of swP, since
 // sector elements in the public scheme are reduced mod the curve order.
 type swPubExtractor struct {
 	S        int
@@ -358,7 +363,7 @@ func (e *swPubExtractor) Witness(chal line.Challenge, proof line.Proof) error {
 	if len(wp.Mu) != e.S {
 		return fmt.Errorf("swpub.Extractor.Witness: proof has %d μ values, want %d", len(wp.Mu), e.S)
 	}
-	indices, coeffs := line.DeriveChallenge(s, wc.Seed, e.ids, wc.C, bn256.Order)
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, e.ids, wc.C, bn254Order)
 	rhs := make([]*big.Int, e.S)
 	for j, m := range wp.Mu {
 		rhs[j] = fixed32ToBig(m)
@@ -372,7 +377,7 @@ func (e *swPubExtractor) Witness(chal line.Challenge, proof line.Proof) error {
 func (e *swPubExtractor) Extract() (blocks.BlockStore, error) {
 	N := len(e.ids)
 	S := e.S
-	P := bn256.Order
+	P := bn254Order
 	if N == 0 {
 		return blocks.NewMemStore(nil), nil
 	}

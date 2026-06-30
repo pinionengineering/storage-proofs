@@ -805,6 +805,13 @@ type UpdateOp struct {
 }
 
 // UpdateResult is returned by PerformUpdate.
+//
+// TODO(production): Add TowerHeight int to expose the tower height chosen by
+// coinHeight during Insert. Per §3.4 of the Erway paper, the client must record
+// the tower height for each inserted block to be able to reconstruct the skip
+// list state via BuildWithHeights after a remote Insert. Without this field a
+// client using a remote server cannot reconstruct the skip list after an Insert
+// and must instead re-download the full list. See also SkipList.Heights().
 type UpdateResult struct {
 	OldTag   []byte      // T(old block) before the update
 	OldSteps []ProofStep // pre-update verification path
@@ -840,6 +847,9 @@ func PerformUpdate(s *suite.Suite, pk *pdp.PublicKey, sl *SkipList, op UpdateOp)
 				return nil, err
 			}
 		}
+		// TODO(production): capture the chosen tower height from coinHeight and
+		// return it in UpdateResult.TowerHeight so the client can call
+		// BuildWithHeights after a remote Insert without re-downloading the list.
 		if err := sl.doInsert(s, pk, op.Index+1, op.Data, coinHeight(sl.maxHeight())); err != nil {
 			return nil, err
 		}

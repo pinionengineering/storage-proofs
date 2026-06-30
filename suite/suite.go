@@ -240,12 +240,12 @@ func hmacSHA256PRFBytes256(key []byte, id []byte) *big.Int {
 // Note: AES key schedule is performed per call; a future optimisation could
 // pre-schedule once when the key is stable across many calls.
 func aesCTRPRF256(key []byte, js ...int) *big.Int {
+	if len(js) > 2 {
+		panic(fmt.Sprintf("aesCTRPRF256: too many index arguments: got %d, max 2 (AES-128 nonce is 16 bytes)", len(js)))
+	}
 	aesKey := sha256.Sum256(key) // fixed 32-byte key for AES-256
 	nonce := make([]byte, aes.BlockSize)
 	for i, j := range js {
-		if i >= 2 {
-			break
-		}
 		binary.BigEndian.PutUint64(nonce[i*8:], uint64(j))
 	}
 	ciph, _ := aes.NewCipher(aesKey[:]) // always succeeds: key is 32 bytes

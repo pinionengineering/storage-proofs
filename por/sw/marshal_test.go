@@ -126,14 +126,14 @@ func TestPubSchemeMarshalRoundTrip(t *testing.T) {
 	if !bytes.Equal(ps.PubKey().Name, ps2.PubKey().Name) {
 		t.Error("PubKey.Name mismatch after unmarshal")
 	}
-	if !bytes.Equal(ps.PubKey().V.Marshal(), ps2.PubKey().V.Marshal()) {
+	if ps.PubKey().V != ps2.PubKey().V {
 		t.Error("PubKey.V mismatch after unmarshal")
 	}
 	if len(ps.PubKey().U) != len(ps2.PubKey().U) {
 		t.Fatalf("PubKey.U length: got %d, want %d", len(ps2.PubKey().U), len(ps.PubKey().U))
 	}
 	for i := range ps.PubKey().U {
-		if !bytes.Equal(ps.PubKey().U[i].Marshal(), ps2.PubKey().U[i].Marshal()) {
+		if ps.PubKey().U[i] != ps2.PubKey().U[i] {
 			t.Errorf("PubKey.U[%d] mismatch after unmarshal", i)
 		}
 	}
