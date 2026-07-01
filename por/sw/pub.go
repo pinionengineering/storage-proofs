@@ -14,7 +14,8 @@
 //
 //	σ_i = α·(H(λ‖id_i) + Σ_j f_{i,j}·u_j) ∈ G₁
 //
-// where H(λ‖id_i) = SHA-256(λ‖id_i) mod q · G₁ (ROM hash to G₁).
+// where H(λ‖id_i) = HashToG1(λ‖id_i) via RFC 9380 SVDW with DST
+// "sw-pub-v1-BN254G1_XMD:SHA-256_SVDW_RO_" (see pubHashG1).
 //
 // Proof (server): given challenge (id_t, ν_t):
 //
