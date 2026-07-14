@@ -29,13 +29,27 @@ const (
 	bjoOuterK    = 4
 	bjoW         = 20
 	bjoQ         = 500 // must exceed expected witnesses for extraction; N=100 needs ~236 in the study sweep
-	swS          = 4
+
+	// swSectorBytes (T) and swSectorsPerBlock (s) are fixed, global constants —
+	// never derived from any input block's actual size. Callers whose blocks
+	// may exceed swBlockSize bytes are expected to present SW-Priv/SW-Pub with
+	// a blocks.BlockStore of smaller, bounded-size blocks instead (splitting an
+	// oversized input across several such blocks) — see SchemeSpec.BlockSize.
+	// Given that, swP only ever needs to be validated against swSectorBytes,
+	// statically, once, here — never against any caller's actual data.
+	swSectorBytes     = 16 // T: bytes per sector
+	swSectorsPerBlock = 64 // s: sectors per block (swBlockSize = 1024 bytes)
+	swBlockSize       = swSectorBytes * swSectorsPerBlock
+
 	testBlockSize = 32 // byte length of blocks used in capability tests
 )
 
 var (
-	// swP is a 128-bit prime (2^128 + 51). For SW, each block is split into S
-	// sectors; swP must exceed the max sector value (block bytes / S).
+	// swP must exceed the max possible sector value, 2^(8*swSectorBytes)-1.
+	// This is a 129-bit prime (2^128 + 51), comfortably above 2^128-1, so the
+	// mod-P reduction in sectorElem is a no-op (identity) for every legitimate
+	// swSectorBytes-byte sector value — never change swSectorBytes without
+	// re-checking swP.BitLen() > 8*swSectorBytes (see TestSwPSectorBytesFit).
 	swP = func() *big.Int {
 		p, _ := new(big.Int).SetString("340282366920938463463374607431768211507", 10)
 		return p
@@ -75,6 +89,14 @@ type SchemeSpec struct {
 	ChalFactory line.ChallengerFactory
 	ProvFactory line.ProverFactory
 	Cap         Cap
+
+	// BlockSize is nonzero only for schemes (SW-Priv, SW-Pub) whose sector
+	// math is sized against a fixed block size: callers must present a
+	// blocks.BlockStore whose blocks are at most BlockSize bytes each,
+	// splitting any larger input across multiple such blocks. Zero means the
+	// scheme places no such requirement and consumes whatever blocks its
+	// BlockStore is given as-is (Ateniese, Erway, BJO).
+	BlockSize int
 
 	// MarshalTagger serializes the full key material of a Tagger — including
 	// secrets — for persistent server-side storage (e.g. GCS). The blob includes
@@ -335,7 +357,7 @@ var Schemes = []SchemeSpec{
 				defer mu.Unlock()
 				fn, ok := cache[chalSize]
 				if !ok {
-					sk, err := porsw.KeyGen(&porsw.Params{S: swS, L: chalSize, P: swP})
+					sk, err := porsw.KeyGen(&porsw.Params{S: swSectorsPerBlock, L: chalSize, P: swP})
 					if err != nil {
 						return nil, err
 					}
@@ -351,6 +373,7 @@ var Schemes = []SchemeSpec{
 		ProvFactory:     lineSW.NewProverFactory(),
 		MarshalTagger:   swPrivMarshalTagger,
 		UnmarshalTagger: swPrivUnmarshalTagger,
+		BlockSize:       swBlockSize,
 	},
 	{
 		Name: "BJO",
@@ -397,7 +420,7 @@ var Schemes = []SchemeSpec{
 				defer mu.Unlock()
 				fn, ok := cache[chalSize]
 				if !ok {
-					ps, err := porsw.NewPubScheme(swS, chalSize)
+					ps, err := porsw.NewPubScheme(swSectorsPerBlock, chalSize)
 					if err != nil {
 						return nil, err
 					}
@@ -413,5 +436,6 @@ var Schemes = []SchemeSpec{
 		ProvFactory:     lineSwPub.NewProverFactory(),
 		MarshalTagger:   swPubMarshalTagger,
 		UnmarshalTagger: swPubUnmarshalTagger,
+		BlockSize:       swBlockSize,
 	},
 }

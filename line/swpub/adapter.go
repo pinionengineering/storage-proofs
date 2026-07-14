@@ -416,6 +416,12 @@ func (e *swPubExtractor) Extract() (blocks.BlockStore, error) {
 		block := make([]byte, e.blockLen)
 		for j := range S {
 			start := j * sectorSize
+			if start >= e.blockLen {
+				// Sector entirely beyond block content (S > blockLen/sectorSize can
+				// happen, e.g. a block shorter than S bytes) — pubSectorElem returns 0
+				// for these at tag time, and block[] is already zero-initialized.
+				continue
+			}
 			end := start + sectorSize
 			if end > e.blockLen {
 				end = e.blockLen
