@@ -239,15 +239,19 @@ func TagBlocks(s *suite.Suite, sk *SecretKey, store blocks.BlockStore) ([]*Tag, 
 	p := sk.Params
 	n := store.Len()
 	tags := make([]*Tag, n)
+	blockSize := -1
 	for i, id := range store.IDs() {
 		block, err := store.Block(id)
 		if err != nil {
 			return nil, fmt.Errorf("sw.TagBlocks: block %d: %w", i, err)
 		}
 		if i == 0 {
-			if err := p.ValidateP(len(block)); err != nil {
+			blockSize = len(block)
+			if err := p.ValidateP(blockSize); err != nil {
 				return nil, err
 			}
+		} else if len(block) != blockSize {
+			return nil, fmt.Errorf("sw.TagBlocks: block %d has length %d, want %d (all blocks must be the same size)", i, len(block), blockSize)
 		}
 		sigma := new(big.Int).Mod(s.PRFBytes(sk.K, id), p.P)
 		for j := range p.S {

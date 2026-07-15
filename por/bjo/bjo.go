@@ -877,10 +877,22 @@ func Encode(s *suite.Suite, mk *MasterKey, store blocks.BlockStore) (*EncodedFil
 	p := mk.Params
 	n := store.Len()
 	file := make([][]byte, n)
+	blockSize := -1
 	for i := range n {
 		b, err := store.Block(blocks.IntID(i))
 		if err != nil {
 			return nil, fmt.Errorf("por.Encode: block %d: %w", i, err)
+		}
+		if i == 0 {
+			blockSize = len(b)
+			// P > max(block value) is only required for Phase I extraction
+			// (Params.Alpha > 0, see Extract's doc comment); Alpha=0 never
+			// reduces a block through P, so a smaller P is safe there.
+			if maxBits := blockSize * 8; p.Alpha > 0 && p.P.BitLen() <= maxBits {
+				return nil, fmt.Errorf("por.Encode: P (%d bits) must be > 2^%d for %d-byte blocks (required when Alpha > 0)", p.P.BitLen(), maxBits, blockSize)
+			}
+		} else if len(b) != blockSize {
+			return nil, fmt.Errorf("por.Encode: block %d has length %d, want %d (all blocks must be the same size)", i, len(b), blockSize)
 		}
 		file[i] = b
 	}

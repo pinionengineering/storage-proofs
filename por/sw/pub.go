@@ -215,15 +215,40 @@ func pubSectorElem(block []byte, j, s int) *big.Int {
 	return new(big.Int).Mod(new(big.Int).SetBytes(block[start:end]), bn254Order)
 }
 
+// ValidateSectorBytes returns an error if blockSize, divided into s sectors,
+// would produce a sector wider than BN254's scalar field order safely
+// supports. Every possible sectorSize-byte value must stay strictly below
+// bn254Order, or two distinct byte strings could map to the same scalar (mod
+// bn254Order), breaking the injective mapping extraction depends on. Call
+// with the actual block size before TagBlocks; TagBlocks also calls this
+// automatically on the first block.
+func ValidateSectorBytes(blockSize, s int) error {
+	sectorSize := (blockSize + s - 1) / s
+	maxVal := new(big.Int).Lsh(big.NewInt(1), uint(8*sectorSize))
+	if maxVal.Cmp(bn254Order) > 0 {
+		return fmt.Errorf("sw: sector size %d bytes (blockSize=%d, s=%d) exceeds BN254 order; increase s or shrink blockSize", sectorSize, blockSize, s)
+	}
+	return nil
+}
+
 // TagBlocks computes σ_i = α·(H(Name‖id_i) + Σ_j f_{i,j}·u_j) ∈ G₁ for each block.
 // Each tag is marshalled as 64 bytes (uncompressed G₁ point).
 func (ps *PubScheme) TagBlocks(store blocks.BlockStore) ([][]byte, error) {
 	ids := store.IDs()
 	out := make([][]byte, len(ids))
+	blockSize := -1
 	for i, id := range ids {
 		block, err := store.Block(id)
 		if err != nil {
 			return nil, fmt.Errorf("sw.PubScheme.TagBlocks: block %d: %w", i, err)
+		}
+		if i == 0 {
+			blockSize = len(block)
+			if err := ValidateSectorBytes(blockSize, ps.s); err != nil {
+				return nil, err
+			}
+		} else if len(block) != blockSize {
+			return nil, fmt.Errorf("sw.PubScheme.TagBlocks: block %d has length %d, want %d (all blocks must be the same size)", i, len(block), blockSize)
 		}
 		acc, err := blockHashG1(ps.pk.Name, id)
 		if err != nil {

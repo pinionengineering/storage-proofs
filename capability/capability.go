@@ -25,48 +25,52 @@ import (
 )
 
 const (
-	bjoOuterN    = 8
-	bjoOuterK    = 4
-	bjoW         = 20
-	bjoQ         = 500 // must exceed expected witnesses for extraction; N=100 needs ~236 in the study sweep
-
-	// swSectorBytes (T) and swSectorsPerBlock (s) are fixed, global constants —
-	// never derived from any input block's actual size. Callers whose blocks
-	// may exceed swBlockSize bytes are expected to present SW-Priv/SW-Pub with
-	// a blocks.BlockStore of smaller, bounded-size blocks instead (splitting an
-	// oversized input across several such blocks) — see SchemeSpec.BlockSize.
-	// Given that, swP only ever needs to be validated against swSectorBytes,
-	// statically, once, here — never against any caller's actual data.
-	swSectorBytes     = 16 // T: bytes per sector
-	swSectorsPerBlock = 64 // s: sectors per block (swBlockSize = 1024 bytes)
-	swBlockSize       = swSectorBytes * swSectorsPerBlock
+	bjoOuterN = 8
+	bjoOuterK = 4
+	bjoW      = 20
+	bjoQ      = 500 // must exceed expected witnesses for extraction; N=100 needs ~236 in the study sweep
 
 	testBlockSize = 32 // byte length of blocks used in capability tests
+
+	// MaxSWPubSectorBytes is the largest sector byte size safe for SW-Pub:
+	// a sector is interpreted as a scalar mod the BN254 group order (a fixed,
+	// ~254-bit prime — not a caller choice), so every possible T-byte value
+	// must stay strictly below it. 31 bytes (248 bits) is the largest T with
+	// 2^(8T)-1 guaranteed less than the order for any 31-byte value; 32 bytes
+	// would let some values reach or exceed it, breaking the injective
+	// raw-bytes-to-field-element mapping extraction depends on. Exported so
+	// callers choosing a blockSize/sectorsPerBlock pair can size against it.
+	MaxSWPubSectorBytes = 31
 )
 
-var (
-	// swP must exceed the max possible sector value, 2^(8*swSectorBytes)-1.
-	// This is a 129-bit prime (2^128 + 51), comfortably above 2^128-1, so the
-	// mod-P reduction in sectorElem is a no-op (identity) for every legitimate
-	// swSectorBytes-byte sector value — never change swSectorBytes without
-	// re-checking swP.BitLen() > 8*swSectorBytes (see TestSwPSectorBytesFit).
-	swP = func() *big.Int {
-		p, _ := new(big.Int).SetString("340282366920938463463374607431768211507", 10)
-		return p
-	}()
-)
+// swPForSectorBytes returns a random prime with enough bits to exceed the
+// maximum value of a sectorBytes-byte sector (P > 2^(8*sectorBytes)). SW-Priv
+// treats each sector as a single Z_P element, so P must be larger than any
+// sector value for the extraction property to hold regardless of sector size.
+// Mirrors bjoPForBlockSize below.
+func swPForSectorBytes(sectorBytes int) (*big.Int, error) {
+	p, err := rand.Prime(rand.Reader, sectorBytes*8+1)
+	if err != nil {
+		return nil, fmt.Errorf("capability: swPForSectorBytes(%d): %w", sectorBytes, err)
+	}
+	return p, nil
+}
+
+// ceilDiv mirrors the sector-byte-size math done inside por/sw's sectorElem /
+// pubSectorElem, so P (SW-Priv) and the T<=31 guard (SW-Pub) are checked
+// against the same worst-case sector size those functions will actually use.
+func ceilDiv(a, b int) int { return (a + b - 1) / b }
 
 // bjoPForBlockSize returns a random prime with enough bits to exceed the
 // maximum value of a blockBytes-byte block (P > 2^(8·blockBytes)). BJO treats
 // each encoded block as a single Z_P element, so P must be larger than any
 // block value for the extraction property to hold regardless of block size.
-func bjoPForBlockSize(blockBytes int) *big.Int {
-	bits := blockBytes*8 + 1
-	p, err := rand.Prime(rand.Reader, bits)
+func bjoPForBlockSize(blockBytes int) (*big.Int, error) {
+	p, err := rand.Prime(rand.Reader, blockBytes*8+1)
 	if err != nil {
-		panic(fmt.Sprintf("capability: bjoPForBlockSize(%d): %v", blockBytes, err))
+		return nil, fmt.Errorf("capability: bjoPForBlockSize(%d): %w", blockBytes, err)
 	}
-	return p
+	return p, nil
 }
 
 // SetupTagger combines line.Tagger and line.SetupProducer, which all scheme
@@ -74,6 +78,16 @@ func bjoPForBlockSize(blockBytes int) *big.Int {
 type SetupTagger interface {
 	line.Tagger
 	line.SetupProducer
+}
+
+// taggerCacheKey caches a constructed Tagger by every parameter that
+// determines its key material, so distinct configurations never collide.
+// sectorsPerBlock is unused (left zero) for schemes that don't sector-split
+// blocks (BJO).
+type taggerCacheKey struct {
+	chalSize        int
+	blockSize       int
+	sectorsPerBlock int
 }
 
 // Cap describes which optional protocol properties a scheme supports.
@@ -84,19 +98,22 @@ type Cap struct {
 
 // SchemeSpec describes one storage-proof scheme using the line interfaces.
 type SchemeSpec struct {
-	Name        string
-	NewTagger   func(keyBits, chalSize int) (SetupTagger, error)
+	Name string
+
+	// NewTagger constructs a Tagger for this scheme. blockSize and
+	// sectorsPerBlock are only meaningful for schemes whose key material is
+	// sized against a caller-chosen block size (SW-Priv, SW-Pub, BJO) —
+	// schemes without such a requirement ignore both (Ateniese, Erway).
+	// blockSize is the exact byte size of every block the caller's
+	// blocks.BlockStore will present (the same value the caller uses to
+	// configure its block-size virtualization layer). For SW-Priv/SW-Pub,
+	// sectorsPerBlock (S) additionally divides each block into S sectors of
+	// ceil(blockSize/S) bytes each — see por/sw's sectorElem; BJO ignores
+	// sectorsPerBlock since it treats a whole block as one Z_P element.
+	NewTagger   func(keyBits, chalSize, blockSize, sectorsPerBlock int) (SetupTagger, error)
 	ChalFactory line.ChallengerFactory
 	ProvFactory line.ProverFactory
 	Cap         Cap
-
-	// BlockSize is nonzero only for schemes (SW-Priv, SW-Pub) whose sector
-	// math is sized against a fixed block size: callers must present a
-	// blocks.BlockStore whose blocks are at most BlockSize bytes each,
-	// splitting any larger input across multiple such blocks. Zero means the
-	// scheme places no such requirement and consumes whatever blocks its
-	// BlockStore is given as-is (Ateniese, Erway, BJO).
-	BlockSize int
 
 	// MarshalTagger serializes the full key material of a Tagger — including
 	// secrets — for persistent server-side storage (e.g. GCS). The blob includes
@@ -293,10 +310,10 @@ var Schemes = []SchemeSpec{
 	{
 		Name: "Ateniese",
 		Cap:  Cap{SparseBlocks: true},
-		NewTagger: func() func(int, int) (SetupTagger, error) {
+		NewTagger: func() func(int, int, int, int) (SetupTagger, error) {
 			var mu sync.Mutex
 			cache := map[int]func() (SetupTagger, error){}
-			return func(keyBits, _ int) (SetupTagger, error) {
+			return func(keyBits, _, _, _ int) (SetupTagger, error) {
 				mu.Lock()
 				defer mu.Unlock()
 				fn, ok := cache[keyBits]
@@ -321,10 +338,10 @@ var Schemes = []SchemeSpec{
 	{
 		Name: "Erway",
 		Cap:  Cap{SparseBlocks: false},
-		NewTagger: func() func(int, int) (SetupTagger, error) {
+		NewTagger: func() func(int, int, int, int) (SetupTagger, error) {
 			var mu sync.Mutex
 			cache := map[int]func() (SetupTagger, error){}
-			return func(keyBits, _ int) (SetupTagger, error) {
+			return func(keyBits, _, _, _ int) (SetupTagger, error) {
 				mu.Lock()
 				defer mu.Unlock()
 				fn, ok := cache[keyBits]
@@ -349,22 +366,28 @@ var Schemes = []SchemeSpec{
 	{
 		Name: "SW-Priv",
 		Cap:  Cap{SparseBlocks: true, Extraction: true},
-		NewTagger: func() func(int, int) (SetupTagger, error) {
+		NewTagger: func() func(int, int, int, int) (SetupTagger, error) {
 			var mu sync.Mutex
-			cache := map[int]func() (SetupTagger, error){}
-			return func(_, chalSize int) (SetupTagger, error) {
+			cache := map[taggerCacheKey]func() (SetupTagger, error){}
+			return func(_, chalSize, blockSize, sectorsPerBlock int) (SetupTagger, error) {
 				mu.Lock()
 				defer mu.Unlock()
-				fn, ok := cache[chalSize]
+				key := taggerCacheKey{chalSize, blockSize, sectorsPerBlock}
+				fn, ok := cache[key]
 				if !ok {
-					sk, err := porsw.KeyGen(&porsw.Params{S: swSectorsPerBlock, L: chalSize, P: swP})
+					sectorBytes := ceilDiv(blockSize, sectorsPerBlock)
+					p, err := swPForSectorBytes(sectorBytes)
+					if err != nil {
+						return nil, err
+					}
+					sk, err := porsw.KeyGen(&porsw.Params{S: sectorsPerBlock, L: chalSize, P: p})
 					if err != nil {
 						return nil, err
 					}
 					fn = func() (SetupTagger, error) {
 						return lineSW.NewTagger(sk, suite.SuiteV1), nil
 					}
-					cache[chalSize] = fn
+					cache[key] = fn
 				}
 				return fn()
 			}
@@ -373,22 +396,23 @@ var Schemes = []SchemeSpec{
 		ProvFactory:     lineSW.NewProverFactory(),
 		MarshalTagger:   swPrivMarshalTagger,
 		UnmarshalTagger: swPrivUnmarshalTagger,
-		BlockSize:       swBlockSize,
 	},
 	{
 		Name: "BJO",
 		Cap:  Cap{SparseBlocks: false, Extraction: true},
-		NewTagger: func() func(int, int) (SetupTagger, error) {
+		NewTagger: func() func(int, int, int, int) (SetupTagger, error) {
 			var mu sync.Mutex
-			cache := map[int]func() (SetupTagger, error){}
-			// P is generated once per chalSize with enough bits for testBlockSize-byte
-			// blocks. In production, callers choose P based on their actual block size.
-			bjoP := bjoPForBlockSize(testBlockSize)
-			return func(_, chalSize int) (SetupTagger, error) {
+			cache := map[taggerCacheKey]func() (SetupTagger, error){}
+			return func(_, chalSize, blockSize, _ int) (SetupTagger, error) {
 				mu.Lock()
 				defer mu.Unlock()
-				fn, ok := cache[chalSize]
+				key := taggerCacheKey{chalSize: chalSize, blockSize: blockSize}
+				fn, ok := cache[key]
 				if !ok {
+					bjoP, err := bjoPForBlockSize(blockSize)
+					if err != nil {
+						return nil, err
+					}
 					mk, err := porbjo.KeyGen(&porbjo.Params{
 						V: chalSize, W: bjoW, Q: bjoQ, P: bjoP,
 						OuterN: bjoOuterN, OuterK: bjoOuterK,
@@ -399,7 +423,7 @@ var Schemes = []SchemeSpec{
 					fn = func() (SetupTagger, error) {
 						return lineBJO.NewTagger(mk, suite.SuiteV1), nil
 					}
-					cache[chalSize] = fn
+					cache[key] = fn
 				}
 				return fn()
 			}
@@ -412,22 +436,29 @@ var Schemes = []SchemeSpec{
 	{
 		Name: "SW-Pub",
 		Cap:  Cap{SparseBlocks: true, Extraction: true},
-		NewTagger: func() func(int, int) (SetupTagger, error) {
+		NewTagger: func() func(int, int, int, int) (SetupTagger, error) {
 			var mu sync.Mutex
-			cache := map[int]func() (SetupTagger, error){}
-			return func(_, chalSize int) (SetupTagger, error) {
+			cache := map[taggerCacheKey]func() (SetupTagger, error){}
+			return func(_, chalSize, blockSize, sectorsPerBlock int) (SetupTagger, error) {
 				mu.Lock()
 				defer mu.Unlock()
-				fn, ok := cache[chalSize]
+				key := taggerCacheKey{chalSize, blockSize, sectorsPerBlock}
+				fn, ok := cache[key]
 				if !ok {
-					ps, err := porsw.NewPubScheme(swSectorsPerBlock, chalSize)
+					sectorBytes := ceilDiv(blockSize, sectorsPerBlock)
+					if sectorBytes > MaxSWPubSectorBytes {
+						return nil, fmt.Errorf(
+							"capability: SW-Pub sector size %d bytes exceeds max %d (blockSize=%d, sectorsPerBlock=%d): increase sectorsPerBlock or shrink blockSize",
+							sectorBytes, MaxSWPubSectorBytes, blockSize, sectorsPerBlock)
+					}
+					ps, err := porsw.NewPubScheme(sectorsPerBlock, chalSize)
 					if err != nil {
 						return nil, err
 					}
 					fn = func() (SetupTagger, error) {
 						return lineSwPub.NewTagger(ps, suite.SuiteV1), nil
 					}
-					cache[chalSize] = fn
+					cache[key] = fn
 				}
 				return fn()
 			}
@@ -436,6 +467,5 @@ var Schemes = []SchemeSpec{
 		ProvFactory:     lineSwPub.NewProverFactory(),
 		MarshalTagger:   swPubMarshalTagger,
 		UnmarshalTagger: swPubUnmarshalTagger,
-		BlockSize:       swBlockSize,
 	},
 }

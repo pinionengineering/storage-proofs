@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	blockspkg "github.com/pinionengineering/storage-proofs/blocks"
+	"github.com/pinionengineering/storage-proofs/capability"
 	"github.com/pinionengineering/storage-proofs/line"
 )
 
@@ -88,7 +89,10 @@ func runSweep() (*Charts, error) {
 		wg.Add(1)
 		go func(i int, cl matCell) {
 			defer wg.Done()
-			m, err := run(cl.sch, cl.store, Params{fixedKeyBits, cl.n, cl.c})
+			m, err := run(cl.sch, cl.store, Params{
+				KeyBits: fixedKeyBits, NBlocks: cl.n, ChalSize: cl.c,
+				BlockSize: fixedBlockSz, SectorsPerBlock: fixedSectorsPerBlock,
+			})
 			matResults[i] = matResult{rec{cl.sch, cl.n, cl.c, m}, err}
 		}(i, cl)
 	}
@@ -180,7 +184,7 @@ func runSweep() (*Charts, error) {
 			wg.Add(1)
 			go func(i, j int, sch schemeSpec, kb int) {
 				defer wg.Done()
-				m, err := run(sch, keyStore, Params{kb, fixedNBlocks, fixedChalSize})
+				m, err := run(sch, keyStore, Params{KeyBits: kb, NBlocks: fixedNBlocks, ChalSize: fixedChalSize})
 				keyGrid[i][j], keyErrs[i][j] = m, err
 			}(i, j, sch, kb)
 		}
@@ -224,16 +228,98 @@ func runSweep() (*Charts, error) {
 		return nil, err
 	}
 
+	// -----------------------------------------------------------------------
+	// GB projection: real (not extrapolated) tag/prove time at gbProjectionBytes.
+	// -----------------------------------------------------------------------
+	fmt.Println("gb projection...")
+	gbChart, err := benchGBProjection()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Charts{
-		TagTime:    tagChart,
-		ProveTime:  proveChart,
-		VerifyTime: verifyChart,
-		ChalBytes:  chalChart,
-		ProofBytes: proofChart,
-		KeySweep:   keyChart,
-		Detection:  detChart,
-		Extraction: extractChart,
-		SuiteSweep: suiteSweep,
+		TagTime:      tagChart,
+		ProveTime:    proveChart,
+		VerifyTime:   verifyChart,
+		ChalBytes:    chalChart,
+		ProofBytes:   proofChart,
+		KeySweep:     keyChart,
+		Detection:    detChart,
+		Extraction:   extractChart,
+		SuiteSweep:   suiteSweep,
+		GBProjection: gbChart,
+	}, nil
+}
+
+// benchGBProjection measures real tag and prove CPU time for a
+// gbProjectionBytes-sized store, using one common block size for every
+// scheme (capability.MaxSWPubSectorBytes * fixedSectorsPerBlock — SW-Pub's best
+// case, applied uniformly so all schemes are compared on equal footing).
+// Unlike the rest of this sweep, this runs the real operation at the real
+// target size rather than fitting/extrapolating from smaller N — some
+// schemes take genuinely long at this scale, which is the point of this
+// chart.
+func benchGBProjection() (GBProjectionData, error) {
+	blockSize := capability.MaxSWPubSectorBytes * fixedSectorsPerBlock
+	n := gbProjectionBytes / blockSize
+
+	names := make([]string, len(schemes))
+	tagV := make([]float64, len(schemes))
+	proveV := make([]float64, len(schemes))
+
+	for i, sch := range schemes {
+		fmt.Printf("  gb %s: n=%d blocks of %d bytes\n", sch.Name, n, blockSize)
+		names[i] = sch.Name
+		store := blockspkg.NewMemStore(randomBlocksOfSize(n, blockSize))
+
+		tagger, err := sch.NewTagger(fixedKeyBits, fixedChalSize, blockSize, fixedSectorsPerBlock)
+		if err != nil {
+			return GBProjectionData{}, fmt.Errorf("%s gb newTagger: %w", sch.Name, err)
+		}
+		tagTime, err := timeOp(gbBenchReps, func() error { _, e := tagger.TagBlocks(store); return e })
+		if err != nil {
+			return GBProjectionData{}, fmt.Errorf("%s gb tag: %w", sch.Name, err)
+		}
+
+		encoded := tagger.EncodedBlocks()
+		clientSetup, err := tagger.ClientSetup()
+		if err != nil {
+			return GBProjectionData{}, fmt.Errorf("%s gb clientSetup: %w", sch.Name, err)
+		}
+		proverSetup, err := tagger.ProverSetup()
+		if err != nil {
+			return GBProjectionData{}, fmt.Errorf("%s gb proverSetup: %w", sch.Name, err)
+		}
+		challenger, err := sch.ChalFactory.NewChallenger(clientSetup, fixedChalSize)
+		if err != nil {
+			return GBProjectionData{}, fmt.Errorf("%s gb newChallenger: %w", sch.Name, err)
+		}
+		prover, err := sch.ProvFactory.NewProver(proverSetup, encoded)
+		if err != nil {
+			return GBProjectionData{}, fmt.Errorf("%s gb newProver: %w", sch.Name, err)
+		}
+		chal, _, err := challenger.Challenge(encoded.IDs())
+		if err != nil {
+			return GBProjectionData{}, fmt.Errorf("%s gb challenge: %w", sch.Name, err)
+		}
+
+		proveTime, err := timeOp(gbBenchReps, func() error {
+			_, e := prover.Prove(chal, encoded)
+			return e
+		})
+		if err != nil {
+			return GBProjectionData{}, fmt.Errorf("%s gb prove: %w", sch.Name, err)
+		}
+
+		tagV[i] = float64(tagTime)
+		proveV[i] = float64(proveTime)
+		fmt.Printf("  gb %s: tag=%dus prove=%dus\n", sch.Name, tagTime, proveTime)
+	}
+
+	return GBProjectionData{
+		Schemes: names,
+		Tag:     []BarGroup{{Label: "Tag", Color: "#64748b", Values: tagV}},
+		Prove:   []BarGroup{{Label: "Prove", Color: "#3b82f6", Values: proveV}},
 	}, nil
 }
 
@@ -264,7 +350,7 @@ func sweepDetection() (LineChart, error) {
 			n, c = detBJONData, detBJOV
 			store = blockspkg.NewMemStore(randomBlocksOfSize(n, fixedBlockSz))
 		}
-		tagger, err := sch.NewTagger(detKeyBits, c)
+		tagger, err := sch.NewTagger(detKeyBits, c, fixedBlockSz, fixedSectorsPerBlock)
 		if err != nil {
 			return LineChart{}, fmt.Errorf("det %s: %w", sch.Name, err)
 		}
@@ -407,7 +493,7 @@ func sweepExtraction() (LineChart, error) {
 // challenge-response rounds and counts how many valid witnesses were required
 // before Extract() succeeded.
 func countExtractionWitnesses(sch schemeSpec, store blockspkg.BlockStore) (int, error) {
-	tagger, err := sch.NewTagger(fixedKeyBits, fixedChalSize)
+	tagger, err := sch.NewTagger(fixedKeyBits, fixedChalSize, fixedBlockSz, fixedSectorsPerBlock)
 	if err != nil {
 		return 0, err
 	}

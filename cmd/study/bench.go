@@ -31,6 +31,13 @@ type Params struct {
 	KeyBits  int
 	NBlocks  int
 	ChalSize int
+
+	// BlockSize and SectorsPerBlock are only meaningful for SW-Priv/SW-Pub
+	// (capability.Cap.RequiresBlockSize) — other schemes ignore them. Must
+	// match the actual per-block byte size of whatever blockspkg.BlockStore
+	// is passed to run().
+	BlockSize       int
+	SectorsPerBlock int
 }
 
 // Metrics holds every quantity measurable from one experiment run.
@@ -47,7 +54,7 @@ type Metrics struct {
 // run executes one complete protocol round for the given scheme and parameters
 // using the line interfaces uniformly. This is the innermost experiment loop.
 func run(sch schemeSpec, store blockspkg.BlockStore, p Params) (Metrics, error) {
-	tagger, err := sch.NewTagger(p.KeyBits, p.ChalSize)
+	tagger, err := sch.NewTagger(p.KeyBits, p.ChalSize, p.BlockSize, p.SectorsPerBlock)
 	if err != nil {
 		return Metrics{}, fmt.Errorf("%s newTagger: %w", sch.Name, err)
 	}

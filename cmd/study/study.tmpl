@@ -73,6 +73,10 @@
     <canvas id="suiteSweep"></canvas>
   </div>
   <div class="chart-box full">
+    <h2>Time to tag / prove a {{.GBProjectionBytes}}-byte store (measured, same block size for every scheme)</h2>
+    <canvas id="gbProjection"></canvas>
+  </div>
+  <div class="chart-box full">
     <h2>Protocol capabilities</h2>
     <table class="cap-table">
       <thead><tr><th>Scheme</th><th>Non-sequential block IDs</th><th>File extraction</th></tr></thead>
@@ -143,6 +147,27 @@ function makeSuiteChart(id, sweep) {
   });
 }
 
+function makeGBChart(id, proj) {
+  const colors = { Tag: '#64748b', Prove: '#3b82f6' };
+  const groups = [proj.tag[0], proj.prove[0]];
+  new Chart(document.getElementById(id), {
+    type: 'bar',
+    data: {
+      labels: proj.schemes,
+      datasets: groups.map(g => ({
+        label: g.label,
+        data: g.values,
+        backgroundColor: colors[g.label] ?? g.color,
+      })),
+    },
+    options: {
+      responsive: true,
+      scales: { y: { type: 'logarithmic', title: { display: true, text: 'CPU time (µs, log scale)' } } },
+      plugins: { legend: { position: 'bottom' } },
+    },
+  });
+}
+
 const c = DATA.charts;
 makeLineChart('tagTime',    c.tagTime);
 makeLineChart('proveTime',  c.proveTime);
@@ -153,6 +178,7 @@ makeLineChart('keySweep',   c.keySweep);
 makeLineChart('detection',  c.detection);
 makeLineChart('extraction', c.extraction);
 makeSuiteChart('suiteSweep', c.suiteSweep);
+makeGBChart('gbProjection', c.gbProjection);
 
 (function() {
   const tbody = document.getElementById('cap-body');

@@ -8,9 +8,10 @@ import (
 )
 
 const (
-	sparseKeyBits  = 1024
-	sparseChalSize = 5
-	sparseBlockSz  = 32
+	sparseKeyBits         = 1024
+	sparseChalSize        = 5
+	sparseBlockSz         = 32
+	sparseSectorsPerBlock = 4 // ceil(sparseBlockSz/sparseSectorsPerBlock)=8 bytes, well under MaxSWPubSectorBytes
 )
 
 func makeSparseStore(t *testing.T) *blockspkg.MapStore {
@@ -34,7 +35,7 @@ func makeSparseStore(t *testing.T) *blockspkg.MapStore {
 }
 
 func trySparse(sch SchemeSpec, store blockspkg.BlockStore) (bool, error) {
-	tagger, err := sch.NewTagger(sparseKeyBits, sparseChalSize)
+	tagger, err := sch.NewTagger(sparseKeyBits, sparseChalSize, sparseBlockSz, sparseSectorsPerBlock)
 	if err != nil {
 		return false, err
 	}

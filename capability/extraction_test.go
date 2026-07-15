@@ -11,10 +11,11 @@ import (
 )
 
 const (
-	extractKeyBits  = 128
-	extractChalSize = 5
-	extractNBlocks  = 20
-	extractMaxRound = 500 // upper bound on witness rounds before giving up
+	extractKeyBits         = 128
+	extractChalSize        = 5
+	extractNBlocks         = 20
+	extractSectorsPerBlock = 4   // ceil(testBlockSize/extractSectorsPerBlock)=8 bytes, well under MaxSWPubSectorBytes
+	extractMaxRound        = 500 // upper bound on witness rounds before giving up
 )
 
 func makeExtractStore(t *testing.T) *blockspkg.MemStore {
@@ -30,7 +31,7 @@ func makeExtractStore(t *testing.T) *blockspkg.MemStore {
 }
 
 func tryExtraction(sch SchemeSpec, original blockspkg.BlockStore) (bool, error) {
-	tagger, err := sch.NewTagger(extractKeyBits, extractChalSize)
+	tagger, err := sch.NewTagger(extractKeyBits, extractChalSize, testBlockSize, extractSectorsPerBlock)
 	if err != nil {
 		return false, err
 	}

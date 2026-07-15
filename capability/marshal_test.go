@@ -40,7 +40,7 @@ func TestMarshalTaggerRoundTrip(t *testing.T) {
 
 				// ── 1. Tag with original tagger ─────────────────────────────
 				store1 := makeExtractStore(t)
-				tagger1, err := sch.NewTagger(keyBits, marshalChalSize)
+				tagger1, err := sch.NewTagger(keyBits, marshalChalSize, testBlockSize, extractSectorsPerBlock)
 				if err != nil {
 					t.Fatalf("NewTagger: %v", err)
 				}

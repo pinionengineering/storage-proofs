@@ -18,11 +18,12 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	fixedKeyBits  = 1024
-	fixedNBlocks  = 40
-	fixedChalSize = 5
-	fixedBlockSz  = 32
-	benchReps     = 3
+	fixedKeyBits         = 1024
+	fixedNBlocks         = 40
+	fixedChalSize        = 5
+	fixedBlockSz         = 32
+	fixedSectorsPerBlock = 64 // S for SW-Priv/SW-Pub; other schemes ignore it
+	benchReps            = 3
 
 	bjoOuterN = 8
 	bjoOuterK = 4
@@ -49,6 +50,18 @@ const (
 	detBJOV      = 10
 	detBJOOuterN = 8
 	detBJOOuterK = 4
+
+	// gbProjectionBytes is the target content size for the "time to tag/prove
+	// N bytes" bar charts: a real measurement at this size for every scheme,
+	// all using the same block size (see gbBlockSize in sweep.go) so schemes
+	// are compared on equal footing — not an extrapolation from the smaller N
+	// used elsewhere in this file.
+	gbProjectionBytes = 1_000_000_000
+
+	// gbBenchReps is deliberately 1: a single real measurement at this scale
+	// is expensive enough that repeating it for noise reduction isn't worth
+	// the added run time.
+	gbBenchReps = 1
 )
 
 var (
@@ -103,16 +116,26 @@ type SuiteSweepData struct {
 	Verify  []BarGroup `json:"verify"`
 }
 
+// GBProjectionData holds the real (not extrapolated) tag/prove CPU time
+// measured for each scheme at gbProjectionBytes, all using the same block
+// size — see gbBlockSize in sweep.go.
+type GBProjectionData struct {
+	Schemes []string   `json:"schemes"`
+	Tag     []BarGroup `json:"tag"`
+	Prove   []BarGroup `json:"prove"`
+}
+
 type Charts struct {
-	TagTime    LineChart      `json:"tagTime"`
-	ProveTime  LineChart      `json:"proveTime"`
-	VerifyTime LineChart      `json:"verifyTime"`
-	ChalBytes  LineChart      `json:"chalBytes"`
-	ProofBytes LineChart      `json:"proofBytes"`
-	KeySweep   LineChart      `json:"keySweep"`
-	Detection  LineChart      `json:"detection"`
-	Extraction LineChart      `json:"extraction"`
-	SuiteSweep SuiteSweepData `json:"suiteSweep"`
+	TagTime      LineChart        `json:"tagTime"`
+	ProveTime    LineChart        `json:"proveTime"`
+	VerifyTime   LineChart        `json:"verifyTime"`
+	ChalBytes    LineChart        `json:"chalBytes"`
+	ProofBytes   LineChart        `json:"proofBytes"`
+	KeySweep     LineChart        `json:"keySweep"`
+	Detection    LineChart        `json:"detection"`
+	Extraction   LineChart        `json:"extraction"`
+	SuiteSweep   SuiteSweepData   `json:"suiteSweep"`
+	GBProjection GBProjectionData `json:"gbProjection"`
 }
 
 type SchemeCapability struct {
@@ -157,9 +180,10 @@ func main() {
 	}
 	defer f.Close()
 	payload := struct {
-		Date     string
-		DataJSON template.JS
-	}{data.Date, template.JS(jsonBytes)}
+		Date              string
+		DataJSON          template.JS
+		GBProjectionBytes int
+	}{data.Date, template.JS(jsonBytes), gbProjectionBytes}
 	if err = tmpl.Execute(f, payload); err != nil {
 		log.Fatal(err)
 	}
