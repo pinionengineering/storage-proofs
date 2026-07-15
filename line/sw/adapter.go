@@ -86,7 +86,6 @@ func (t *Tagger) TagBlocks(store blocks.BlockStore) ([]line.Tag, error) {
 type wireSetup struct {
 	Protocol string     `json:"protocol"`
 	S        int        `json:"sw_s"`
-	L        int        `json:"sw_l"`
 	P        *big.Int   `json:"sw_p"`
 	Tags     []line.Tag `json:"tags"`
 }
@@ -97,13 +96,12 @@ type wireClientSetup struct {
 	K        []byte     `json:"sk_k"`
 	Alpha    []*big.Int `json:"sk_alpha"`
 	S        int        `json:"params_s"`
-	L        int        `json:"params_l"`
 	P        *big.Int   `json:"params_p"`
 }
 
 func (t *Tagger) ProverSetup() ([]byte, error) {
 	p := t.sk.Params
-	return json.Marshal(wireSetup{Protocol: "sw", S: p.S, L: p.L, P: p.P, Tags: t.tags})
+	return json.Marshal(wireSetup{Protocol: "sw", S: p.S, P: p.P, Tags: t.tags})
 }
 
 func (t *Tagger) ClientSetup() ([]byte, error) {
@@ -113,7 +111,7 @@ func (t *Tagger) ClientSetup() ([]byte, error) {
 		SuiteID:  t.s.ID(),
 		K:        t.sk.K,
 		Alpha:    t.sk.Alpha,
-		S:        p.S, L: p.L, P: p.P,
+		S:        p.S, P: p.P,
 	})
 }
 
@@ -149,11 +147,12 @@ func (t *Tagger) NewExtractor() (line.Extractor, error) {
 type challengerFactory struct{}
 
 // NewChallengerFactory returns a ChallengerFactory that reconstructs an sw
-// Challenger from a blob produced by Tagger.ClientSetup. c is ignored; the
-// challenge block count is fixed by the Params.L stored in the setup blob.
+// Challenger from a blob produced by Tagger.ClientSetup. c is the number of
+// blocks to sample per challenge, chosen fresh by the caller each time a
+// Challenger is built — it is not stored key material.
 func NewChallengerFactory() line.ChallengerFactory { return challengerFactory{} }
 
-func (challengerFactory) NewChallenger(setup []byte, _ int) (line.Challenger, error) {
+func (challengerFactory) NewChallenger(setup []byte, c int) (line.Challenger, error) {
 	var ws wireClientSetup
 	if err := json.Unmarshal(setup, &ws); err != nil {
 		return nil, fmt.Errorf("sw.NewChallenger: %w", err)
@@ -165,9 +164,9 @@ func (challengerFactory) NewChallenger(setup []byte, _ int) (line.Challenger, er
 	sk := &porsw.SecretKey{
 		K:      ws.K,
 		Alpha:  ws.Alpha,
-		Params: &porsw.Params{S: ws.S, L: ws.L, P: ws.P},
+		Params: &porsw.Params{S: ws.S, P: ws.P},
 	}
-	return NewChallenger(sk, s), nil
+	return NewChallenger(sk, s, c), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +184,7 @@ func (proverFactory) NewProver(setup []byte, _ blocks.BlockStore) (line.Prover, 
 	if err := json.Unmarshal(setup, &ws); err != nil {
 		return nil, fmt.Errorf("sw.NewProver: %w", err)
 	}
-	return NewProverFromWire(ws.S, ws.L, ws.P, ws.Tags)
+	return NewProverFromWire(ws.S, ws.P, ws.Tags)
 }
 
 // ---------------------------------------------------------------------------
@@ -196,16 +195,17 @@ func (proverFactory) NewProver(setup []byte, _ blocks.BlockStore) (line.Prover, 
 type Challenger struct {
 	sk *porsw.SecretKey
 	s  *suite.Suite
+	c  int // blocks sampled per challenge
 }
 
-func NewChallenger(sk *porsw.SecretKey, s *suite.Suite) *Challenger {
-	return &Challenger{sk: sk, s: s}
+func NewChallenger(sk *porsw.SecretKey, s *suite.Suite, c int) *Challenger {
+	return &Challenger{sk: sk, s: s, c: c}
 }
 
 // DetectionProbability returns the probability that a single challenge catches
 // a server that has corrupted corruptFraction of n blocks.
 func (ch *Challenger) DetectionProbability(n int, corruptFraction float64) float64 {
-	return confidence.HypergeometricDetection(n, ch.sk.Params.L, corruptFraction)
+	return confidence.HypergeometricDetection(n, ch.c, corruptFraction)
 }
 
 // ChalBytes returns the binary size of a compact seed challenge: 1+32+4+4 = 41 bytes.
@@ -214,7 +214,7 @@ func (ch *Challenger) ChalBytes(_ line.Challenge) int {
 }
 
 func (ch *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, error) {
-	c := ch.sk.Params.L
+	c := ch.c
 	if c > len(ids) {
 		c = len(ids)
 	}
@@ -243,8 +243,8 @@ type Prover struct {
 
 // NewProverFromWire builds a server-side Prover from primitive wire values,
 // avoiding the need to import por/sw directly.
-func NewProverFromWire(s, l int, p *big.Int, tags []line.Tag) (*Prover, error) {
-	return NewProver(&porsw.Params{S: s, L: l, P: p}, tags)
+func NewProverFromWire(s int, p *big.Int, tags []line.Tag) (*Prover, error) {
+	return NewProver(&porsw.Params{S: s, P: p}, tags)
 }
 
 // NewProver constructs a Prover from opaque tags returned by Tagger.TagBlocks.

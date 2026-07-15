@@ -47,9 +47,10 @@ type Scheme interface {
 	// in the Scheme instance.
 	TagBlocks(store blocks.BlockStore) ([][]byte, error)
 
-	// MakeChallenge returns a fresh random challenge for the given block IDs.
-	// For PubKind, any holder of the public key can call this.
-	MakeChallenge(ids [][]byte) (*SWChallenge, error)
+	// MakeChallenge returns a fresh random challenge sampling l of the given
+	// block IDs (capped to len(ids)). For PubKind, any holder of the public
+	// key can call this.
+	MakeChallenge(ids [][]byte, l int) (*SWChallenge, error)
 
 	// RespondFetch computes a proof by fetching the challenged blocks on demand.
 	// Called by the server; requires only the serialized tags and a block store.

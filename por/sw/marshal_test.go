@@ -12,7 +12,7 @@ import (
 // --- SW-Priv (§3.2) ----------------------------------------------------------
 
 // TestSWSecretKeyMarshalRoundTrip verifies that json.Marshal / json.Unmarshal
-// preserves K, all Alpha scalars, and the Params (S, L, P).
+// preserves K, all Alpha scalars, and the Params (S, P).
 // Reference: §3.2 Shacham-Waters ASIACRYPT 2008, Gen: pick K ∈ {0,1}^κ,
 // α_1,...,α_S ← Z_P.
 func TestSWSecretKeyMarshalRoundTrip(t *testing.T) {
@@ -36,9 +36,6 @@ func TestSWSecretKeyMarshalRoundTrip(t *testing.T) {
 	}
 	if sk.Params.S != sk2.Params.S {
 		t.Errorf("Params.S: got %d, want %d", sk2.Params.S, sk.Params.S)
-	}
-	if sk.Params.L != sk2.Params.L {
-		t.Errorf("Params.L: got %d, want %d", sk2.Params.L, sk.Params.L)
 	}
 	if sk.Params.P.Cmp(sk2.Params.P) != 0 {
 		t.Error("Params.P mismatch after unmarshal")
@@ -80,7 +77,7 @@ func TestSWSecretKeyMarshalUsable(t *testing.T) {
 		t.Fatalf("TagBlocks: %v", err)
 	}
 
-	chal, err := MakeChallenge(store.IDs(), params)
+	chal, err := MakeChallenge(store.IDs(), params, testChalSize)
 	if err != nil {
 		t.Fatalf("MakeChallenge: %v", err)
 	}
@@ -108,7 +105,7 @@ func TestSWSecretKeyMarshalUsable(t *testing.T) {
 // Reference: §3.3 Shacham-Waters ASIACRYPT 2008, Gen: α ∈ Z_q, v = α·G₂,
 // u₁,...,uₛ ∈ G₁, λ ∈ {0,1}¹²⁸.
 func TestPubSchemeMarshalRoundTrip(t *testing.T) {
-	ps, err := NewPubScheme(4, 5)
+	ps, err := NewPubScheme(4)
 	if err != nil {
 		t.Fatalf("NewPubScheme: %v", err)
 	}
@@ -144,7 +141,7 @@ func TestPubSchemeMarshalRoundTrip(t *testing.T) {
 // This exercises the secret α: if α is corrupted, σ_i = α·(...) is wrong and
 // the pairing check fails.
 func TestPubSchemeMarshalUsable(t *testing.T) {
-	ps, err := NewPubScheme(4, 5)
+	ps, err := NewPubScheme(4)
 	if err != nil {
 		t.Fatalf("NewPubScheme: %v", err)
 	}
@@ -166,7 +163,7 @@ func TestPubSchemeMarshalUsable(t *testing.T) {
 		t.Fatalf("TagBlocks: %v", err)
 	}
 
-	chal, err := ps2.MakeChallenge(store.IDs())
+	chal, err := ps2.MakeChallenge(store.IDs(), testChalSize)
 	if err != nil {
 		t.Fatalf("MakeChallenge: %v", err)
 	}

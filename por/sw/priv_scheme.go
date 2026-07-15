@@ -42,8 +42,8 @@ func (ps *PrivScheme) TagBlocks(store blocks.BlockStore) ([][]byte, error) {
 
 // MakeChallenge generates a fresh challenge with coefficients in Z_P.
 // ids is store.IDs() from the store being audited; len(ids) is used as n (§3.2).
-func (ps *PrivScheme) MakeChallenge(ids [][]byte) (*SWChallenge, error) {
-	c, err := MakeChallenge(ids, ps.sk.Params)
+func (ps *PrivScheme) MakeChallenge(ids [][]byte, l int) (*SWChallenge, error) {
+	c, err := MakeChallenge(ids, ps.sk.Params, l)
 	if err != nil {
 		return nil, err
 	}

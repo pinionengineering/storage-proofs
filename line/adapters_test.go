@@ -89,7 +89,7 @@ func erwaySetup(store blocks.BlockStore) (line.Challenger, line.Prover, blocks.B
 }
 
 func swPrivSetup(store blocks.BlockStore) (line.Challenger, line.Prover, blocks.BlockStore, error) {
-	sk, err := porsw.KeyGen(&porsw.Params{S: 4, L: testC, P: swP})
+	sk, err := porsw.KeyGen(&porsw.Params{S: 4, P: swP})
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -105,7 +105,7 @@ func swPrivSetup(store blocks.BlockStore) (line.Challenger, line.Prover, blocks.
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	ch, err := lineSW.NewChallengerFactory().NewChallenger(cs, 0)
+	ch, err := lineSW.NewChallengerFactory().NewChallenger(cs, testC)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -149,7 +149,7 @@ func bjoSetup(store blocks.BlockStore) (line.Challenger, line.Prover, blocks.Blo
 }
 
 func swPubSetup(store blocks.BlockStore) (line.Challenger, line.Prover, blocks.BlockStore, error) {
-	ps, err := porsw.NewPubScheme(4, testC)
+	ps, err := porsw.NewPubScheme(4)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -165,7 +165,7 @@ func swPubSetup(store blocks.BlockStore) (line.Challenger, line.Prover, blocks.B
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	ch, err := lineSwPub.NewChallengerFactory().NewChallenger(cs, 0)
+	ch, err := lineSwPub.NewChallengerFactory().NewChallenger(cs, testC)
 	if err != nil {
 		return nil, nil, nil, err
 	}

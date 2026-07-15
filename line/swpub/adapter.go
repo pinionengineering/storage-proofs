@@ -46,7 +46,6 @@ type wireClientSetup struct {
 	Protocol string   `json:"protocol"`
 	SuiteID  uint8    `json:"suite_id"`
 	S        int      `json:"s"`
-	L        int      `json:"l"`
 	Name     []byte   `json:"name"` // 16 bytes
 	V        []byte   `json:"v"`    // 128 bytes, G2
 	U        [][]byte `json:"u"`    // s × 64 bytes, G1
@@ -114,7 +113,6 @@ func (t *Tagger) ClientSetup() ([]byte, error) {
 		Protocol: "swpub",
 		SuiteID:  t.s.ID(),
 		S:        t.ps.S(),
-		L:        t.ps.L(),
 		Name:     pk.Name,
 		V:        vRaw[:],
 		U:        u,
@@ -143,10 +141,11 @@ func (t *Tagger) PubScheme() *porsw.PubScheme { return t.ps }
 type challengerFactory struct{}
 
 // NewChallengerFactory returns a ChallengerFactory for the SW-Pub scheme.
-// c is ignored; the challenge size is fixed by L stored in the setup blob.
+// c is the number of blocks to sample per challenge, chosen fresh by the
+// caller each time a Challenger is built — it is not stored key material.
 func NewChallengerFactory() line.ChallengerFactory { return challengerFactory{} }
 
-func (challengerFactory) NewChallenger(setup []byte, _ int) (line.Challenger, error) {
+func (challengerFactory) NewChallenger(setup []byte, c int) (line.Challenger, error) {
 	var ws wireClientSetup
 	if err := json.Unmarshal(setup, &ws); err != nil {
 		return nil, fmt.Errorf("swpub.NewChallenger: %w", err)
@@ -166,7 +165,7 @@ func (challengerFactory) NewChallenger(setup []byte, _ int) (line.Challenger, er
 		}
 	}
 	pk := &porsw.PubPublicKey{Name: ws.Name, V: v, U: u}
-	return &Challenger{pk: pk, suite: s, s: ws.S, l: ws.L}, nil
+	return &Challenger{pk: pk, suite: s, s: ws.S, c: c}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +194,7 @@ type Challenger struct {
 	pk    *porsw.PubPublicKey
 	suite *suite.Suite
 	s     int
-	l     int
+	c     int // blocks sampled per challenge
 }
 
 // ChalBytes returns the binary size of a compact seed challenge: 1+32+4+4 = 41 bytes.
@@ -204,7 +203,7 @@ func (ch *Challenger) ChalBytes(_ line.Challenge) int {
 }
 
 func (ch *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, error) {
-	c := ch.l
+	c := ch.c
 	if c > len(ids) {
 		c = len(ids)
 	}
@@ -258,7 +257,7 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 	indices, coeffs := line.DeriveChallenge(s, wc.Seed, store.IDs(), wc.C, bn254Order)
 	swChal := &porsw.SWChallenge{Kind: porsw.PubKind, Indices: indices, Coeffs: coeffs}
 	// RespondFetch only reads ps.s from the scheme; no keypair needed.
-	resp, err := porsw.NewPubSchemeFromKey(nil, p.s, 0).RespondFetch(p.tags, swChal, store)
+	resp, err := porsw.NewPubSchemeFromKey(nil, p.s).RespondFetch(p.tags, swChal, store)
 	if err != nil {
 		return nil, fmt.Errorf("swpub.Prove: %w", err)
 	}

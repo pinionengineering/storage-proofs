@@ -79,11 +79,6 @@ type Params struct {
 	// constraint for extraction) and increases proof size (S μ_j per audit).
 	S int
 
-	// L is the number of blocks sampled per challenge. Higher L gives tighter
-	// per-round soundness (probability a cheating server goes undetected ≈
-	// (1 − corrupt_fraction)^L) at the cost of more server I/O per audit.
-	L int
-
 	// P is the prime field modulus. Must satisfy P > 2^(8·ceil(blockSize/S))
 	// for the extraction property (sector bytes map injectively into Z_P).
 	// For the basic challenge/verify protocol any prime works.
@@ -185,7 +180,7 @@ func KeyGen(params *Params) (*SecretKey, error) {
 	return &SecretKey{K: k, Alpha: alpha, Params: params}, nil
 }
 
-// MarshalJSON implements json.Marshaler. Encodes K, Alpha, and Params (S, L, P)
+// MarshalJSON implements json.Marshaler. Encodes K, Alpha, and Params (S, P)
 // as needed to reconstitute the full key. Reference: §3.2 Shacham-Waters ASIACRYPT 2008,
 // Gen: K ∈ {0,1}^κ, α_1,...,α_S ← Z_P.
 func (sk SecretKey) MarshalJSON() ([]byte, error) {
@@ -195,13 +190,12 @@ func (sk SecretKey) MarshalJSON() ([]byte, error) {
 	}
 	type wire struct {
 		S     int      `json:"s"`
-		L     int      `json:"l"`
 		P     []byte   `json:"p"`
 		K     []byte   `json:"k"`
 		Alpha [][]byte `json:"alpha"`
 	}
 	return json.Marshal(wire{
-		S: sk.Params.S, L: sk.Params.L,
+		S: sk.Params.S,
 		P: sk.Params.P.Bytes(), K: sk.K, Alpha: alpha,
 	})
 }
@@ -210,7 +204,6 @@ func (sk SecretKey) MarshalJSON() ([]byte, error) {
 func (sk *SecretKey) UnmarshalJSON(data []byte) error {
 	type wire struct {
 		S     int      `json:"s"`
-		L     int      `json:"l"`
 		P     []byte   `json:"p"`
 		K     []byte   `json:"k"`
 		Alpha [][]byte `json:"alpha"`
@@ -225,7 +218,7 @@ func (sk *SecretKey) UnmarshalJSON(data []byte) error {
 	}
 	sk.K = w.K
 	sk.Alpha = alpha
-	sk.Params = &Params{S: w.S, L: w.L, P: new(big.Int).SetBytes(w.P)}
+	sk.Params = &Params{S: w.S, P: new(big.Int).SetBytes(w.P)}
 	return nil
 }
 
@@ -265,16 +258,15 @@ func TagBlocks(s *suite.Suite, sk *SecretKey, store blocks.BlockStore) ([]*Tag, 
 }
 
 // MakeChallenge generates a fresh random challenge for the given block IDs.
-// L distinct IDs are chosen uniformly; each is paired with a random coefficient
-// in Z_P. The challenge can be generated any number of times without consuming
-// stored state.
-func MakeChallenge(ids [][]byte, params *Params) (*Challenge, error) {
+// l distinct IDs are chosen uniformly (capped to len(ids)); each is paired
+// with a random coefficient in Z_P. The challenge can be generated any number
+// of times without consuming stored state.
+func MakeChallenge(ids [][]byte, params *Params, l int) (*Challenge, error) {
 	n := len(ids)
 	if n <= 0 {
 		return nil, fmt.Errorf("sw.MakeChallenge: ids must be non-empty")
 	}
 
-	l := params.L
 	if l > n {
 		l = n
 	}
@@ -314,7 +306,7 @@ func MakeChallenge(ids [][]byte, params *Params) (*Challenge, error) {
 // each challenged block index to obtain raw bytes, accumulates the linear
 // combination across sectors and tags, and returns the proof.
 //
-// Only the L challenged blocks are fetched; the remaining n-L are not accessed.
+// Only the challenged blocks are fetched; the rest are not accessed.
 func RespondFetch(params *Params, tags []*Tag, chal *Challenge, store blocks.BlockStore) (*Proof, error) {
 	P := params.P
 	sigma := big.NewInt(0)

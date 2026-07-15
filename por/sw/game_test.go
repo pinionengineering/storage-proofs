@@ -9,6 +9,10 @@ import (
 	"github.com/pinionengineering/storage-proofs/suite"
 )
 
+// testChalSize is the challenge size passed explicitly to MakeChallenge
+// throughout this file (it is no longer part of Params).
+const testChalSize = 5
+
 // smallParams returns SW params suitable for fast tests with 32-byte blocks.
 // S=4 sectors of 8 bytes each; P is large enough that 2^64 < P.
 func smallParams() *Params {
@@ -17,7 +21,6 @@ func smallParams() *Params {
 	p, _ := new(big.Int).SetString("340282366920938463463374607431768211507", 10) // 2^128 - 189, a prime
 	return &Params{
 		S: 4,
-		L: 5,
 		P: p,
 	}
 }
@@ -58,7 +61,7 @@ func TestSWChallengeGame(t *testing.T) {
 	}
 
 	for round := range 20 {
-		chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
+		chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params, testChalSize)
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
@@ -102,7 +105,7 @@ func TestSWTamperedBlockFails(t *testing.T) {
 			rand.Read(g)
 			corruptBlocks[i] = g
 		}
-		chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
+		chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params, testChalSize)
 		proof, err := RespondFetch(params, tags, chal, blocks.NewMemStore(corruptBlocks))
 		if err != nil {
 			t.Fatalf("RespondFetch: %v", err)
@@ -138,7 +141,7 @@ func TestSWUnlimitedChallenges(t *testing.T) {
 	}
 
 	for round := range 100 {
-		chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
+		chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params, testChalSize)
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
@@ -172,7 +175,7 @@ func TestSWRespondFetchEquivalent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
+	chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params, testChalSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,12 +200,12 @@ func TestSWRespondFetchEquivalent(t *testing.T) {
 	}
 }
 
-// TestSWSmallFile verifies the protocol works when n < L (fewer blocks than
-// challenge size); MakeChallenge clamps L to n.
+// TestSWSmallFile verifies the protocol works when n < l (fewer blocks than
+// challenge size); MakeChallenge clamps l to n.
 func TestSWSmallFile(t *testing.T) {
+	const l = 10 // l deliberately larger than file
 	params := &Params{
 		S: 2,
-		L: 10, // L deliberately larger than file
 		P: smallParams().P,
 	}
 
@@ -217,7 +220,7 @@ func TestSWSmallFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
+	chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params, l)
 	if err != nil {
 		t.Fatal(err)
 	}

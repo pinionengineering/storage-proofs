@@ -36,7 +36,7 @@ func randZP(t *testing.T, P *big.Int) *big.Int {
 // TagBlocks must produce exactly this value for each block.
 func TestTagEquation(t *testing.T) {
 	P := testP
-	params := &Params{S: 3, L: 2, P: P}
+	params := &Params{S: 3, P: P}
 
 	k := make([]byte, 32)
 	rand.Read(k)
@@ -160,7 +160,7 @@ func TestSectorElemModP(t *testing.T) {
 // Verify accepts it, and then checking that the expanded equation holds.
 func TestVerificationEquation(t *testing.T) {
 	P := testP
-	params := &Params{S: 3, L: 4, P: P}
+	params := &Params{S: 3, P: P}
 
 	sk, err := KeyGen(params)
 	if err != nil {
@@ -178,7 +178,7 @@ func TestVerificationEquation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
+	chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestVerificationEquation(t *testing.T) {
 // produce a consistent μ_j for data it doesn't have.
 func TestVerificationEquationTamperedMu(t *testing.T) {
 	P := testP
-	params := &Params{S: 3, L: 4, P: P}
+	params := &Params{S: 3, P: P}
 
 	sk, err := KeyGen(params)
 	if err != nil {
@@ -234,7 +234,7 @@ func TestVerificationEquationTamperedMu(t *testing.T) {
 	}
 	tags, _ := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
-	chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
+	chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params, 4)
 	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
 
 	// Flip one μ value.
@@ -253,7 +253,7 @@ func TestVerificationEquationTamperedMu(t *testing.T) {
 // TestVerificationEquationTamperedSigma verifies that a modified Sigma is rejected.
 func TestVerificationEquationTamperedSigma(t *testing.T) {
 	P := testP
-	params := &Params{S: 3, L: 4, P: P}
+	params := &Params{S: 3, P: P}
 
 	sk, err := KeyGen(params)
 	if err != nil {
@@ -267,7 +267,7 @@ func TestVerificationEquationTamperedSigma(t *testing.T) {
 	}
 	tags, _ := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
-	chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
+	chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params, 4)
 	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
 
 	proof.Sigma.Add(proof.Sigma, big.NewInt(1))
@@ -288,10 +288,10 @@ func TestVerificationEquationTamperedSigma(t *testing.T) {
 // are distinct, as required by the Fisher-Yates partial shuffle.
 func TestMakeChallengeDistinctIndices(t *testing.T) {
 	P := testP
-	params := &Params{S: 2, L: 10, P: P}
+	params := &Params{S: 2, P: P}
 
 	for range 50 {
-		chal, err := MakeChallenge(blocks.NewMemStore(make([][]byte, 20)).IDs(), params)
+		chal, err := MakeChallenge(blocks.NewMemStore(make([][]byte, 20)).IDs(), params, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -308,11 +308,11 @@ func TestMakeChallengeDistinctIndices(t *testing.T) {
 // TestMakeChallengeIndicesInRange verifies that all challenge indices are in [0, n).
 func TestMakeChallengeIndicesInRange(t *testing.T) {
 	P := testP
-	params := &Params{S: 2, L: 5, P: P}
+	params := &Params{S: 2, P: P}
 	n := 15
 
 	for range 30 {
-		chal, err := MakeChallenge(blocks.NewMemStore(make([][]byte, n)).IDs(), params)
+		chal, err := MakeChallenge(blocks.NewMemStore(make([][]byte, n)).IDs(), params, 5)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -330,9 +330,9 @@ func TestMakeChallengeIndicesInRange(t *testing.T) {
 // TestMakeChallengeCoeffsInZP verifies that all challenge coefficients are in Z_P.
 func TestMakeChallengeCoeffsInZP(t *testing.T) {
 	P := testP
-	params := &Params{S: 2, L: 8, P: P}
+	params := &Params{S: 2, P: P}
 
-	chal, err := MakeChallenge(blocks.NewMemStore(make([][]byte, 20)).IDs(), params)
+	chal, err := MakeChallenge(blocks.NewMemStore(make([][]byte, 20)).IDs(), params, 8)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,10 +347,10 @@ func TestMakeChallengeCoeffsInZP(t *testing.T) {
 // parameters differ with overwhelming probability (fresh randomness each time).
 func TestMakeChallengeNonDeterministic(t *testing.T) {
 	P := testP
-	params := &Params{S: 2, L: 5, P: P}
+	params := &Params{S: 2, P: P}
 
-	c1, _ := MakeChallenge(blocks.NewMemStore(make([][]byte, 20)).IDs(), params)
-	c2, _ := MakeChallenge(blocks.NewMemStore(make([][]byte, 20)).IDs(), params)
+	c1, _ := MakeChallenge(blocks.NewMemStore(make([][]byte, 20)).IDs(), params, 5)
+	c2, _ := MakeChallenge(blocks.NewMemStore(make([][]byte, 20)).IDs(), params, 5)
 
 	same := true
 	for i := range len(c1.Indices) {
@@ -373,7 +373,7 @@ func TestMakeChallengeNonDeterministic(t *testing.T) {
 // For a single-element challenge {i_0, ν_0}, proof.Sigma must equal ν_0·σ_{i_0} mod P.
 func TestProofSigmaLinearity(t *testing.T) {
 	P := testP
-	params := &Params{S: 2, L: 1, P: P} // single-block challenge
+	params := &Params{S: 2, P: P} // single-block challenge
 
 	sk, err := KeyGen(params)
 	if err != nil {
@@ -390,7 +390,7 @@ func TestProofSigmaLinearity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
+	chal, err := MakeChallenge(blocks.NewMemStore(file).IDs(), params, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +413,7 @@ func TestProofSigmaLinearity(t *testing.T) {
 // For a single-element challenge, Mu[j] == ν_0 · f_{i_0,j}.
 func TestProofMuLinearity(t *testing.T) {
 	P := testP
-	params := &Params{S: 3, L: 1, P: P}
+	params := &Params{S: 3, P: P}
 
 	sk, err := KeyGen(params)
 	if err != nil {
@@ -427,7 +427,7 @@ func TestProofMuLinearity(t *testing.T) {
 	}
 	tags, _ := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
-	chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params)
+	chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params, 1)
 	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
 
 	idx := chal.Indices[0]

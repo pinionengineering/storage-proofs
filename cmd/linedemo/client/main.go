@@ -7,7 +7,8 @@
 //	  -protocol      ateniese|erway|sw|bjo|swpub (default ateniese)
 //	  -server        server base URL (default http://localhost:8765)
 //	  -rounds        audit rounds to run (default 10)
-//	  -challenged    blocks challenged per round (default 10; ignored for bjo/sw/swpub)
+//	  -challenged    blocks challenged per round (default 10; ignored for bjo, which
+//	                 fixes its challenge size at tag time via its sentinel encoding)
 package main
 
 import (
@@ -100,7 +101,7 @@ func main() {
 
 	case "sw":
 		kind = "POR"
-		sk, err := porsw.KeyGen(&porsw.Params{S: 10, L: *challenged, P: swPrime})
+		sk, err := porsw.KeyGen(&porsw.Params{S: 10, P: swPrime})
 		must(err)
 		tagger = lineSW.NewTagger(sk, s)
 		_, err = tagger.TagBlocks(store)
@@ -119,7 +120,7 @@ func main() {
 
 	case "swpub":
 		kind = "POR"
-		ps, err := porsw.NewPubScheme(4, *challenged)
+		ps, err := porsw.NewPubScheme(4)
 		must(err)
 		tagger = lineSwPub.NewTagger(ps, s)
 		_, err = tagger.TagBlocks(store)

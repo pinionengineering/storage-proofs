@@ -13,7 +13,7 @@ import (
 
 func pubScheme(t *testing.T) *PubScheme {
 	t.Helper()
-	ps, err := NewPubScheme(4, 5)
+	ps, err := NewPubScheme(4)
 	if err != nil {
 		t.Fatalf("NewPubScheme: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestPubChallengeGame(t *testing.T) {
 	}
 
 	for round := range 10 {
-		chal, err := ps.MakeChallenge(ids)
+		chal, err := ps.MakeChallenge(ids, testChalSize)
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
@@ -69,7 +69,7 @@ func TestVerifyPub(t *testing.T) {
 	store := blocks.NewMemStore(file)
 	ids := store.IDs()
 	tags, _ := ps.TagBlocks(store)
-	chal, _ := ps.MakeChallenge(ids)
+	chal, _ := ps.MakeChallenge(ids, testChalSize)
 	proof, _ := ps.RespondFetch(tags, chal, store)
 
 	pk := ps.PubKey()
@@ -91,7 +91,7 @@ func TestVerifyPubTamperedMu(t *testing.T) {
 	store := blocks.NewMemStore(file)
 	ids := store.IDs()
 	tags, _ := ps.TagBlocks(store)
-	chal, _ := ps.MakeChallenge(ids)
+	chal, _ := ps.MakeChallenge(ids, testChalSize)
 	proof, _ := ps.RespondFetch(tags, chal, store)
 
 	proof.Mu[0].Add(proof.Mu[0], big.NewInt(1))
@@ -115,7 +115,7 @@ func TestVerifyPubTamperedSigma(t *testing.T) {
 	store := blocks.NewMemStore(file)
 	ids := store.IDs()
 	tags, _ := ps.TagBlocks(store)
-	chal, _ := ps.MakeChallenge(ids)
+	chal, _ := ps.MakeChallenge(ids, testChalSize)
 	proof, _ := ps.RespondFetch(tags, chal, store)
 
 	// Flip a byte in sigma — the result is (almost certainly) an invalid G₁
@@ -147,7 +147,7 @@ func TestPubTamperedBlockFails(t *testing.T) {
 			rand.Read(g)
 			corruptBlocks[i] = g
 		}
-		chal, _ := ps.MakeChallenge(ids)
+		chal, _ := ps.MakeChallenge(ids, testChalSize)
 		proof, err := ps.RespondFetch(tags, chal, blocks.NewMemStore(corruptBlocks))
 		if err != nil {
 			t.Fatalf("RespondFetch: %v", err)
@@ -168,8 +168,9 @@ func TestPubTamperedBlockFails(t *testing.T) {
 // --- 4. Scheme interface -----------------------------------------------------
 
 // runScheme exercises the Scheme interface for any implementation: TagBlocks,
-// MakeChallenge, RespondFetch, Verify across nRounds independent challenges.
-func runScheme(t *testing.T, scheme Scheme, nBlocks, blockSize, nRounds int) {
+// MakeChallenge, RespondFetch, Verify across nRounds independent challenges,
+// each sampling l blocks.
+func runScheme(t *testing.T, scheme Scheme, nBlocks, blockSize, nRounds, l int) {
 	t.Helper()
 	file := randomFile(t, nBlocks, blockSize)
 	store := blocks.NewMemStore(file)
@@ -181,7 +182,7 @@ func runScheme(t *testing.T, scheme Scheme, nBlocks, blockSize, nRounds int) {
 
 	ids := store.IDs()
 	for round := range nRounds {
-		chal, err := scheme.MakeChallenge(ids)
+		chal, err := scheme.MakeChallenge(ids, l)
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
@@ -205,16 +206,16 @@ func TestSchemeInterfacePriv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScheme(t, priv, 20, 32, 5)
+	runScheme(t, priv, 20, 32, 5, testChalSize)
 }
 
 // TestSchemeInterfacePub runs the Scheme game through PubScheme.
 func TestSchemeInterfacePub(t *testing.T) {
-	pub, err := NewPubScheme(4, 5)
+	pub, err := NewPubScheme(4)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScheme(t, pub, 20, 32, 5)
+	runScheme(t, pub, 20, 32, 5, testChalSize)
 }
 
 // TestSchemeKind verifies that Kind() returns the correct discriminant.
@@ -224,7 +225,7 @@ func TestSchemeKind(t *testing.T) {
 		t.Fatalf("PrivScheme.Kind() = %v, want PrivKind", priv.Kind())
 	}
 
-	pub, _ := NewPubScheme(4, 5)
+	pub, _ := NewPubScheme(4)
 	if pub.Kind() != PubKind {
 		t.Fatalf("PubScheme.Kind() = %v, want PubKind", pub.Kind())
 	}
@@ -232,9 +233,10 @@ func TestSchemeKind(t *testing.T) {
 
 // --- 5. Small file -----------------------------------------------------------
 
-// TestPubSmallFile verifies that PubScheme handles n < L by clamping L to n.
+// TestPubSmallFile verifies that PubScheme handles n < l by clamping l to n.
 func TestPubSmallFile(t *testing.T) {
-	ps, err := NewPubScheme(2, 10) // L=10 > n=3
+	const l = 10 // l=10 > n=3
+	ps, err := NewPubScheme(2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +246,7 @@ func TestPubSmallFile(t *testing.T) {
 	ids := store.IDs()
 	tags, _ := ps.TagBlocks(store)
 
-	chal, err := ps.MakeChallenge(ids)
+	chal, err := ps.MakeChallenge(ids, l)
 	if err != nil {
 		t.Fatal(err)
 	}

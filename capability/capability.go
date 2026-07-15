@@ -369,10 +369,10 @@ var Schemes = []SchemeSpec{
 		NewTagger: func() func(int, int, int, int) (SetupTagger, error) {
 			var mu sync.Mutex
 			cache := map[taggerCacheKey]func() (SetupTagger, error){}
-			return func(_, chalSize, blockSize, sectorsPerBlock int) (SetupTagger, error) {
+			return func(_, _, blockSize, sectorsPerBlock int) (SetupTagger, error) {
 				mu.Lock()
 				defer mu.Unlock()
-				key := taggerCacheKey{chalSize, blockSize, sectorsPerBlock}
+				key := taggerCacheKey{blockSize: blockSize, sectorsPerBlock: sectorsPerBlock}
 				fn, ok := cache[key]
 				if !ok {
 					sectorBytes := ceilDiv(blockSize, sectorsPerBlock)
@@ -380,7 +380,7 @@ var Schemes = []SchemeSpec{
 					if err != nil {
 						return nil, err
 					}
-					sk, err := porsw.KeyGen(&porsw.Params{S: sectorsPerBlock, L: chalSize, P: p})
+					sk, err := porsw.KeyGen(&porsw.Params{S: sectorsPerBlock, P: p})
 					if err != nil {
 						return nil, err
 					}
@@ -439,10 +439,10 @@ var Schemes = []SchemeSpec{
 		NewTagger: func() func(int, int, int, int) (SetupTagger, error) {
 			var mu sync.Mutex
 			cache := map[taggerCacheKey]func() (SetupTagger, error){}
-			return func(_, chalSize, blockSize, sectorsPerBlock int) (SetupTagger, error) {
+			return func(_, _, blockSize, sectorsPerBlock int) (SetupTagger, error) {
 				mu.Lock()
 				defer mu.Unlock()
-				key := taggerCacheKey{chalSize, blockSize, sectorsPerBlock}
+				key := taggerCacheKey{blockSize: blockSize, sectorsPerBlock: sectorsPerBlock}
 				fn, ok := cache[key]
 				if !ok {
 					sectorBytes := ceilDiv(blockSize, sectorsPerBlock)
@@ -451,7 +451,7 @@ var Schemes = []SchemeSpec{
 							"capability: SW-Pub sector size %d bytes exceeds max %d (blockSize=%d, sectorsPerBlock=%d): increase sectorsPerBlock or shrink blockSize",
 							sectorBytes, MaxSWPubSectorBytes, blockSize, sectorsPerBlock)
 					}
-					ps, err := porsw.NewPubScheme(sectorsPerBlock, chalSize)
+					ps, err := porsw.NewPubScheme(sectorsPerBlock)
 					if err != nil {
 						return nil, err
 					}

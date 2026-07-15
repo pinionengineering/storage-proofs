@@ -27,7 +27,7 @@ func TestRoundTrip(t *testing.T) {
 	store := blocks.NewMemStore(raw)
 
 	// Setup.
-	ps, err := porsw.NewPubScheme(s, l)
+	ps, err := porsw.NewPubScheme(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestRoundTrip(t *testing.T) {
 	}
 
 	// Reconstruct challenger and prover from wire payloads.
-	challenger, err := swpub.NewChallengerFactory().NewChallenger(clientSetup, 0)
+	challenger, err := swpub.NewChallengerFactory().NewChallenger(clientSetup, l)
 	if err != nil {
 		t.Fatal(err)
 	}

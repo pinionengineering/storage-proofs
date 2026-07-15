@@ -73,11 +73,11 @@ type PubPublicKey struct {
 type PubScheme struct {
 	alpha *big.Int
 	pk    *PubPublicKey
-	s, l  int
+	s     int
 }
 
 // NewPubScheme generates a fresh PubScheme: secret α, public (v, u₁,...,uₛ, λ).
-func NewPubScheme(s, l int) (*PubScheme, error) {
+func NewPubScheme(s int) (*PubScheme, error) {
 	alpha, err := rand.Int(rand.Reader, bn254Order)
 	if err != nil {
 		return nil, fmt.Errorf("sw.NewPubScheme: alpha: %w", err)
@@ -103,7 +103,6 @@ func NewPubScheme(s, l int) (*PubScheme, error) {
 		alpha: alpha,
 		pk:    &PubPublicKey{Name: name, V: v, U: u},
 		s:     s,
-		l:     l,
 	}, nil
 }
 
@@ -112,10 +111,9 @@ func (ps *PubScheme) PubKey() *PubPublicKey { return ps.pk }
 
 func (ps *PubScheme) Kind() SchemeKind { return PubKind }
 func (ps *PubScheme) S() int           { return ps.s }
-func (ps *PubScheme) L() int           { return ps.l }
 
 // MarshalJSON implements json.Marshaler. Includes the secret α (fixed 32-byte
-// big-endian), public key (v, u₁,...,uₛ, name), and scheme parameters (s, l).
+// big-endian), public key (v, u₁,...,uₛ, name), and scheme parameter s.
 func (ps PubScheme) MarshalJSON() ([]byte, error) {
 	u := make([][]byte, len(ps.pk.U))
 	for j := range ps.pk.U {
@@ -125,7 +123,6 @@ func (ps PubScheme) MarshalJSON() ([]byte, error) {
 	vRaw := ps.pk.V.RawBytes()
 	type wire struct {
 		S     int      `json:"s"`
-		L     int      `json:"l"`
 		Name  []byte   `json:"name"`
 		V     []byte   `json:"v"`
 		U     [][]byte `json:"u"`
@@ -135,7 +132,7 @@ func (ps PubScheme) MarshalJSON() ([]byte, error) {
 	fixed := make([]byte, 32)
 	copy(fixed[32-len(ab):], ab)
 	return json.Marshal(wire{
-		S: ps.s, L: ps.l,
+		S:     ps.s,
 		Name:  ps.pk.Name,
 		V:     vRaw[:],
 		U:     u,
@@ -147,7 +144,6 @@ func (ps PubScheme) MarshalJSON() ([]byte, error) {
 func (ps *PubScheme) UnmarshalJSON(data []byte) error {
 	type wire struct {
 		S     int      `json:"s"`
-		L     int      `json:"l"`
 		Name  []byte   `json:"name"`
 		V     []byte   `json:"v"`
 		U     [][]byte `json:"u"`
@@ -170,16 +166,15 @@ func (ps *PubScheme) UnmarshalJSON(data []byte) error {
 	ps.alpha = new(big.Int).SetBytes(w.Alpha)
 	ps.pk = &PubPublicKey{Name: w.Name, V: v, U: u}
 	ps.s = w.S
-	ps.l = w.L
 	return nil
 }
 
 // NewPubSchemeFromKey reconstructs a PubScheme from existing key material
 // without generating a new keypair. Used by protocol adapters that rebuild
-// scheme state from wire setup payloads. pk may be nil if only s and l are
-// needed (e.g. for RespondFetch, which does not use the public key).
-func NewPubSchemeFromKey(pk *PubPublicKey, s, l int) *PubScheme {
-	return &PubScheme{pk: pk, s: s, l: l}
+// scheme state from wire setup payloads. pk may be nil if only s is needed
+// (e.g. for RespondFetch, which does not use the public key).
+func NewPubSchemeFromKey(pk *PubPublicKey, s int) *PubScheme {
+	return &PubScheme{pk: pk, s: s}
 }
 
 // pubHashDST is the RFC 9380 domain separation tag for the SW §3.3 hash-to-G₁
@@ -268,14 +263,14 @@ func (ps *PubScheme) TagBlocks(store blocks.BlockStore) ([][]byte, error) {
 	return out, nil
 }
 
-// MakeChallenge generates a fresh challenge with coefficients in Z_q.
-// Distinct IDs are chosen via a partial Fisher-Yates shuffle over index positions.
-func (ps *PubScheme) MakeChallenge(ids [][]byte) (*SWChallenge, error) {
+// MakeChallenge generates a fresh challenge sampling l of the given ids
+// (capped to len(ids)), with coefficients in Z_q. Distinct IDs are chosen via
+// a partial Fisher-Yates shuffle over index positions.
+func (ps *PubScheme) MakeChallenge(ids [][]byte, l int) (*SWChallenge, error) {
 	n := len(ids)
 	if n <= 0 {
 		return nil, fmt.Errorf("sw.PubScheme.MakeChallenge: ids must be non-empty")
 	}
-	l := ps.l
 	if l > n {
 		l = n
 	}
