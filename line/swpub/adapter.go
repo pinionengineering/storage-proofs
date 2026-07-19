@@ -127,6 +127,19 @@ func (t *Tagger) ProverSetup() ([]byte, error) {
 	})
 }
 
+// ProverSetupFromTags implements line.ExternalSetupProducer.
+func (t *Tagger) ProverSetupFromTags(tags []line.Tag) ([]byte, error) {
+	raw := make([][]byte, len(tags))
+	for i, tg := range tags {
+		raw[i] = []byte(tg)
+	}
+	return json.Marshal(wireProverSetup{
+		Protocol: "swpub",
+		S:        t.ps.S(),
+		Tags:     raw,
+	})
+}
+
 // EncodedBlocks returns the original store; SW-Pub does not transform blocks.
 func (t *Tagger) EncodedBlocks() blocks.BlockStore { return t.store }
 

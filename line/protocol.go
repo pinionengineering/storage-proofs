@@ -82,6 +82,18 @@ type SetupProducer interface {
 	EncodedBlocks() blocks.BlockStore
 }
 
+// ExternalSetupProducer is implemented by Taggers whose ProverSetup can be
+// built from a caller-supplied tag list, without TagBlocks having been called
+// on this same instance. Needed by callers that compute tags across several
+// separate TagBlocks calls (e.g. on disjoint block ranges, possibly on
+// different Tagger instances) and then need to build one combined
+// ProverSetup from the concatenated result.
+type ExternalSetupProducer interface {
+	// ProverSetupFromTags returns the same payload ProverSetup would, using
+	// tags in place of whatever this instance's own TagBlocks call cached.
+	ProverSetupFromTags(tags []Tag) ([]byte, error)
+}
+
 // ProverFactory builds a Prover on the server side from a setup payload
 // produced by SetupProducer.ProverSetup. store holds the blocks the server
 // has already stored.

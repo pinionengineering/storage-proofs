@@ -104,6 +104,12 @@ func (t *Tagger) ProverSetup() ([]byte, error) {
 	return json.Marshal(wireSetup{Protocol: "sw", S: p.S, P: p.P, Tags: t.tags})
 }
 
+// ProverSetupFromTags implements line.ExternalSetupProducer.
+func (t *Tagger) ProverSetupFromTags(tags []line.Tag) ([]byte, error) {
+	p := t.sk.Params
+	return json.Marshal(wireSetup{Protocol: "sw", S: p.S, P: p.P, Tags: tags})
+}
+
 func (t *Tagger) ClientSetup() ([]byte, error) {
 	p := t.sk.Params
 	return json.Marshal(wireClientSetup{

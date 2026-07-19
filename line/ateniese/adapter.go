@@ -257,6 +257,11 @@ func (t *Tagger) ProverSetup() ([]byte, error) {
 	return json.Marshal(wireSetup{Protocol: "ateniese", Tags: tags, PKN: t.pk.N, PKG: t.pk.G})
 }
 
+// ProverSetupFromTags implements line.ExternalSetupProducer.
+func (t *Tagger) ProverSetupFromTags(tags []line.Tag) ([]byte, error) {
+	return json.Marshal(wireSetup{Protocol: "ateniese", Tags: tags, PKN: t.pk.N, PKG: t.pk.G})
+}
+
 func (t *Tagger) ClientSetup() ([]byte, error) {
 	tags, err := encodeTags(t.cachedTags)
 	if err != nil {
