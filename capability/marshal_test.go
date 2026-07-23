@@ -8,8 +8,8 @@ import (
 
 // marshalKeySizes is the set of RSA key bit lengths exercised by
 // TestMarshalTaggerRoundTrip. For schemes that ignore keyBits (SW-Priv,
-// SW-Pub, BJO), the loop still runs but all iterations share the same key
-// material (the scheme's NewTagger caches by keyBits).
+// SW-Pub, BJO), the loop still runs but every iteration generates its own
+// independent key material since NewTagger never caches.
 var marshalKeySizes = []int{128, 256, 512}
 
 const marshalChalSize = 5

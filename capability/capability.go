@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
-	"sync"
 
 	"github.com/pinionengineering/storage-proofs/line"
 	lineAteniese "github.com/pinionengineering/storage-proofs/line/ateniese"
@@ -78,16 +77,6 @@ func bjoPForBlockSize(blockBytes int) (*big.Int, error) {
 type SetupTagger interface {
 	line.Tagger
 	line.SetupProducer
-}
-
-// taggerCacheKey caches a constructed Tagger by every parameter that
-// determines its key material, so distinct configurations never collide.
-// sectorsPerBlock is unused (left zero) for schemes that don't sector-split
-// blocks (BJO).
-type taggerCacheKey struct {
-	chalSize        int
-	blockSize       int
-	sectorsPerBlock int
 }
 
 // Cap describes which optional protocol properties a scheme supports.
@@ -310,26 +299,16 @@ var Schemes = []SchemeSpec{
 	{
 		Name: "Ateniese",
 		Cap:  Cap{SparseBlocks: true},
-		NewTagger: func() func(int, int, int, int) (SetupTagger, error) {
-			var mu sync.Mutex
-			cache := map[int]func() (SetupTagger, error){}
-			return func(keyBits, _, _, _ int) (SetupTagger, error) {
-				mu.Lock()
-				defer mu.Unlock()
-				fn, ok := cache[keyBits]
-				if !ok {
-					pk, sk, err := pdpateniese.KeyGen(keyBits)
-					if err != nil {
-						return nil, err
-					}
-					fn = func() (SetupTagger, error) {
-						return lineAteniese.NewTagger(pk, sk, suite.SuiteV1), nil
-					}
-					cache[keyBits] = fn
-				}
-				return fn()
+		// Deliberately generates a fresh (pk, sk) on every call: each
+		// challenge key must get its own private key, never one shared
+		// across callers. See NewTagger's doc comment above.
+		NewTagger: func(keyBits, _, _, _ int) (SetupTagger, error) {
+			pk, sk, err := pdpateniese.KeyGen(keyBits)
+			if err != nil {
+				return nil, err
 			}
-		}(),
+			return lineAteniese.NewTagger(pk, sk, suite.SuiteV1), nil
+		},
 		ChalFactory:     lineAteniese.NewChallengerFactory(),
 		ProvFactory:     lineAteniese.NewProverFactory(),
 		MarshalTagger:   ateniesesMarshalTagger,
@@ -338,26 +317,14 @@ var Schemes = []SchemeSpec{
 	{
 		Name: "Erway",
 		Cap:  Cap{SparseBlocks: false},
-		NewTagger: func() func(int, int, int, int) (SetupTagger, error) {
-			var mu sync.Mutex
-			cache := map[int]func() (SetupTagger, error){}
-			return func(keyBits, _, _, _ int) (SetupTagger, error) {
-				mu.Lock()
-				defer mu.Unlock()
-				fn, ok := cache[keyBits]
-				if !ok {
-					pk, err := pdperway.KeyGen(keyBits)
-					if err != nil {
-						return nil, err
-					}
-					fn = func() (SetupTagger, error) {
-						return lineErway.NewTagger(pk, suite.SuiteV1), nil
-					}
-					cache[keyBits] = fn
-				}
-				return fn()
+		// Fresh key material every call; see the Ateniese entry above.
+		NewTagger: func(keyBits, _, _, _ int) (SetupTagger, error) {
+			pk, err := pdperway.KeyGen(keyBits)
+			if err != nil {
+				return nil, err
 			}
-		}(),
+			return lineErway.NewTagger(pk, suite.SuiteV1), nil
+		},
 		ChalFactory:     lineErway.NewChallengerFactory(),
 		ProvFactory:     lineErway.NewProverFactory(suite.SuiteV1),
 		MarshalTagger:   erwayMarshalTagger,
@@ -366,32 +333,19 @@ var Schemes = []SchemeSpec{
 	{
 		Name: "SW-Priv",
 		Cap:  Cap{SparseBlocks: true, Extraction: true},
-		NewTagger: func() func(int, int, int, int) (SetupTagger, error) {
-			var mu sync.Mutex
-			cache := map[taggerCacheKey]func() (SetupTagger, error){}
-			return func(_, _, blockSize, sectorsPerBlock int) (SetupTagger, error) {
-				mu.Lock()
-				defer mu.Unlock()
-				key := taggerCacheKey{blockSize: blockSize, sectorsPerBlock: sectorsPerBlock}
-				fn, ok := cache[key]
-				if !ok {
-					sectorBytes := ceilDiv(blockSize, sectorsPerBlock)
-					p, err := swPForSectorBytes(sectorBytes)
-					if err != nil {
-						return nil, err
-					}
-					sk, err := porsw.KeyGen(&porsw.Params{S: sectorsPerBlock, P: p})
-					if err != nil {
-						return nil, err
-					}
-					fn = func() (SetupTagger, error) {
-						return lineSW.NewTagger(sk, suite.SuiteV1), nil
-					}
-					cache[key] = fn
-				}
-				return fn()
+		// Fresh key material every call; see the Ateniese entry above.
+		NewTagger: func(_, _, blockSize, sectorsPerBlock int) (SetupTagger, error) {
+			sectorBytes := ceilDiv(blockSize, sectorsPerBlock)
+			p, err := swPForSectorBytes(sectorBytes)
+			if err != nil {
+				return nil, err
 			}
-		}(),
+			sk, err := porsw.KeyGen(&porsw.Params{S: sectorsPerBlock, P: p})
+			if err != nil {
+				return nil, err
+			}
+			return lineSW.NewTagger(sk, suite.SuiteV1), nil
+		},
 		ChalFactory:     lineSW.NewChallengerFactory(),
 		ProvFactory:     lineSW.NewProverFactory(),
 		MarshalTagger:   swPrivMarshalTagger,
@@ -400,34 +354,21 @@ var Schemes = []SchemeSpec{
 	{
 		Name: "BJO",
 		Cap:  Cap{SparseBlocks: false, Extraction: true},
-		NewTagger: func() func(int, int, int, int) (SetupTagger, error) {
-			var mu sync.Mutex
-			cache := map[taggerCacheKey]func() (SetupTagger, error){}
-			return func(_, chalSize, blockSize, _ int) (SetupTagger, error) {
-				mu.Lock()
-				defer mu.Unlock()
-				key := taggerCacheKey{chalSize: chalSize, blockSize: blockSize}
-				fn, ok := cache[key]
-				if !ok {
-					bjoP, err := bjoPForBlockSize(blockSize)
-					if err != nil {
-						return nil, err
-					}
-					mk, err := porbjo.KeyGen(&porbjo.Params{
-						V: chalSize, W: bjoW, Q: bjoQ, P: bjoP,
-						OuterN: bjoOuterN, OuterK: bjoOuterK,
-					})
-					if err != nil {
-						return nil, err
-					}
-					fn = func() (SetupTagger, error) {
-						return lineBJO.NewTagger(mk, suite.SuiteV1), nil
-					}
-					cache[key] = fn
-				}
-				return fn()
+		// Fresh key material every call; see the Ateniese entry above.
+		NewTagger: func(_, chalSize, blockSize, _ int) (SetupTagger, error) {
+			bjoP, err := bjoPForBlockSize(blockSize)
+			if err != nil {
+				return nil, err
 			}
-		}(),
+			mk, err := porbjo.KeyGen(&porbjo.Params{
+				V: chalSize, W: bjoW, Q: bjoQ, P: bjoP,
+				OuterN: bjoOuterN, OuterK: bjoOuterK,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return lineBJO.NewTagger(mk, suite.SuiteV1), nil
+		},
 		ChalFactory:     lineBJO.NewChallengerFactory(),
 		ProvFactory:     lineBJO.NewProverFactory(suite.SuiteV1),
 		MarshalTagger:   bjoMarshalTagger,
@@ -436,33 +377,20 @@ var Schemes = []SchemeSpec{
 	{
 		Name: "SW-Pub",
 		Cap:  Cap{SparseBlocks: true, Extraction: true},
-		NewTagger: func() func(int, int, int, int) (SetupTagger, error) {
-			var mu sync.Mutex
-			cache := map[taggerCacheKey]func() (SetupTagger, error){}
-			return func(_, _, blockSize, sectorsPerBlock int) (SetupTagger, error) {
-				mu.Lock()
-				defer mu.Unlock()
-				key := taggerCacheKey{blockSize: blockSize, sectorsPerBlock: sectorsPerBlock}
-				fn, ok := cache[key]
-				if !ok {
-					sectorBytes := ceilDiv(blockSize, sectorsPerBlock)
-					if sectorBytes > MaxSWPubSectorBytes {
-						return nil, fmt.Errorf(
-							"capability: SW-Pub sector size %d bytes exceeds max %d (blockSize=%d, sectorsPerBlock=%d): increase sectorsPerBlock or shrink blockSize",
-							sectorBytes, MaxSWPubSectorBytes, blockSize, sectorsPerBlock)
-					}
-					ps, err := porsw.NewPubScheme(sectorsPerBlock)
-					if err != nil {
-						return nil, err
-					}
-					fn = func() (SetupTagger, error) {
-						return lineSwPub.NewTagger(ps, suite.SuiteV1), nil
-					}
-					cache[key] = fn
-				}
-				return fn()
+		// Fresh key material every call; see the Ateniese entry above.
+		NewTagger: func(_, _, blockSize, sectorsPerBlock int) (SetupTagger, error) {
+			sectorBytes := ceilDiv(blockSize, sectorsPerBlock)
+			if sectorBytes > MaxSWPubSectorBytes {
+				return nil, fmt.Errorf(
+					"capability: SW-Pub sector size %d bytes exceeds max %d (blockSize=%d, sectorsPerBlock=%d): increase sectorsPerBlock or shrink blockSize",
+					sectorBytes, MaxSWPubSectorBytes, blockSize, sectorsPerBlock)
 			}
-		}(),
+			ps, err := porsw.NewPubScheme(sectorsPerBlock)
+			if err != nil {
+				return nil, err
+			}
+			return lineSwPub.NewTagger(ps, suite.SuiteV1), nil
+		},
 		ChalFactory:     lineSwPub.NewChallengerFactory(),
 		ProvFactory:     lineSwPub.NewProverFactory(),
 		MarshalTagger:   swPubMarshalTagger,
