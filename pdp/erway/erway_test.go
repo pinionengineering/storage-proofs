@@ -2,6 +2,7 @@ package erway
 
 import (
 	"crypto/rand"
+	"fmt"
 	"testing"
 
 	blockstore "github.com/pinionengineering/storage-proofs/blocks"
@@ -9,276 +10,264 @@ import (
 	"github.com/pinionengineering/storage-proofs/suite"
 )
 
-func makeKey(t *testing.T) *pdp.PublicKey {
-	t.Helper()
-	pk, err := KeyGen(64) // small for test speed
-	if err != nil {
-		t.Fatalf("KeyGen: %v", err)
+func randBlocks(n int) [][]byte {
+	blks := make([][]byte, n)
+	for i := range blks {
+		blks[i] = make([]byte, 32)
+		rand.Read(blks[i])
 	}
-	return pk
+	return blks
 }
 
-func randomBlocks(t *testing.T, n, size int) [][]byte {
-	t.Helper()
-	blocks := make([][]byte, n)
-	for i := range n {
-		blocks[i] = make([]byte, size)
-		if _, err := rand.Read(blocks[i]); err != nil {
-			t.Fatal(err)
+func randIntN(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	b := make([]byte, 4)
+	rand.Read(b)
+	v := int(b[0])<<24 | int(b[1])<<16 | int(b[2])<<8 | int(b[3])
+	if v < 0 {
+		v = -v
+	}
+	return v % n
+}
+
+func intsEqual(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
 		}
 	}
-	return blocks
+	return true
 }
 
-// TestBuildAndBasis checks that Build succeeds and returns a non-zero basis.
-func TestBuildAndBasis(t *testing.T) {
-	pk := makeKey(t)
-	blocks := randomBlocks(t, 10, 32)
-	sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if sl.n != 10 {
-		t.Fatalf("sl.n = %d, want 10", sl.n)
-	}
-	allZero := true
-	for _, b := range basis {
-		if b != 0 {
-			allZero = false
-			break
-		}
-	}
-	if allZero {
-		t.Fatal("basis is all zeros — label computation likely broken")
-	}
-}
-
-// TestAtRankVerifyPath checks that every block position can be proven and verified.
-func TestAtRankVerifyPath(t *testing.T) {
-	pk := makeKey(t)
-	blocks := randomBlocks(t, 15, 32)
-	sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-
+func checkAllPositions(t *testing.T, sl *SkipList, basis Basis, label string) {
+	t.Helper()
 	for pos := 1; pos <= sl.n; pos++ {
-		tagBytes, steps, err := sl.atRank(pos)
+		bp, err := sl.atRank(pos)
 		if err != nil {
-			t.Fatalf("atRank(%d): %v", pos, err)
+			t.Fatalf("%s: atRank(%d): %v", label, pos, err)
 		}
-		bp := BlockProof{Tag: tagBytes, Steps: steps}
 		ok, err := verifyPath(basis, pos, bp)
 		if err != nil {
-			t.Fatalf("verifyPath(%d): %v", pos, err)
+			t.Fatalf("%s: verifyPath(%d): %v", label, pos, err)
 		}
 		if !ok {
-			t.Fatalf("verifyPath(%d): valid proof rejected", pos)
+			t.Fatalf("%s: verifyPath(%d) rejected valid proof", label, pos)
 		}
 	}
 }
 
-// TestProveAndVerify runs the full challenge-prove-verify cycle.
-func TestProveAndVerify(t *testing.T) {
-	pk := makeKey(t)
-	blocks := randomBlocks(t, 20, 32)
-	sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
+func TestBuildProveVerify(t *testing.T) {
+	pk, err := pdp.MakePublicKey(64)
 	if err != nil {
-		t.Fatalf("Build: %v", err)
+		t.Fatal(err)
 	}
+	for _, n := range []int{1, 2, 3, 5, 10, 30, 60, 120} {
+		for trial := 0; trial < 40; trial++ {
+			blks := randBlocks(n)
+			sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blks))
+			if err != nil {
+				t.Fatalf("n=%d Build: %v", n, err)
+			}
+			checkAllPositions(t, sl, basis, fmt.Sprintf("n=%d trial=%d", n, trial))
 
-	for round := range 5 {
-		chal, err := MakeChallenge(sl.n, 4)
-		if err != nil {
-			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
-		}
-		proof, err := Prove(suite.SuiteV1, pk, sl, chal, blockstore.NewMemStore(blocks))
-		if err != nil {
-			t.Fatalf("Prove(round=%d): %v", round, err)
-		}
-		ok, err := VerifyProof(pk, basis, chal, proof)
-		if err != nil {
-			t.Fatalf("VerifyProof(round=%d): %v", round, err)
-		}
-		if !ok {
-			t.Fatalf("VerifyProof(round=%d): valid proof rejected", round)
-		}
-	}
-}
-
-// TestTamperedBlockFails checks that a wrong block causes VerifyProof to fail.
-func TestTamperedBlockFails(t *testing.T) {
-	pk := makeKey(t)
-	blocks := randomBlocks(t, 20, 32)
-	sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-
-	anyFailed := false
-	for range 10 {
-		corruptBlocks := make([][]byte, sl.n)
-		for i := range corruptBlocks {
-			g := make([]byte, 32)
-			rand.Read(g)
-			corruptBlocks[i] = g
-		}
-		chal, _ := MakeChallenge(sl.n, 4)
-		proof, err := Prove(suite.SuiteV1, pk, sl, chal, blockstore.NewMemStore(corruptBlocks))
-		if err != nil {
-			t.Fatalf("Prove with corrupt fetch: %v", err)
-		}
-		ok, err := VerifyProof(pk, basis, chal, proof)
-		if err != nil {
-			t.Fatalf("VerifyProof: %v", err)
-		}
-		if !ok {
-			anyFailed = true
-		}
-	}
-	if !anyFailed {
-		t.Fatal("all challenges passed despite corrupted blocks — soundness failure")
-	}
-}
-
-// TestModifyUpdate checks that a Modify update correctly advances the basis.
-func TestModifyUpdate(t *testing.T) {
-	pk := makeKey(t)
-	blocks := randomBlocks(t, 10, 32)
-	sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-
-	newData := make([]byte, 32)
-	rand.Read(newData)
-
-	op := UpdateOp{Kind: Modify, Index: 5, Data: newData}
-	result, err := PerformUpdate(suite.SuiteV1, pk, sl, op)
-	if err != nil {
-		t.Fatalf("PerformUpdate: %v", err)
-	}
-
-	newBasis, ok, err := VerifyUpdate(pk, basis, op, result)
-	if err != nil {
-		t.Fatalf("VerifyUpdate: %v", err)
-	}
-	if !ok {
-		t.Fatal("VerifyUpdate rejected a valid update")
-	}
-
-	// The new basis should match the skip list's actual root label.
-	expectedBasis := Basis(sl.rootLabel())
-	if !equal32(newBasis, expectedBasis) {
-		t.Fatalf("new basis mismatch after Modify:\n  got:  %x\n  want: %x", newBasis, expectedBasis)
-	}
-
-	// Subsequent challenges against the updated skip list should pass.
-	blocks[4] = newData
-	chal, _ := MakeChallenge(sl.n, 4)
-	proof, err := Prove(suite.SuiteV1, pk, sl, chal, blockstore.NewMemStore(blocks))
-	if err != nil {
-		t.Fatalf("Prove after Modify: %v", err)
-	}
-	ok2, err := VerifyProof(pk, newBasis, chal, proof)
-	if err != nil {
-		t.Fatalf("VerifyProof after Modify: %v", err)
-	}
-	if !ok2 {
-		t.Fatal("VerifyProof after Modify failed")
-	}
-}
-
-// TestInsertUpdate checks that Insert works and the basis advances.
-func TestInsertUpdate(t *testing.T) {
-	pk := makeKey(t)
-	blocks := randomBlocks(t, 10, 32)
-	sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-
-	newData := make([]byte, 32)
-	rand.Read(newData)
-
-	op := UpdateOp{Kind: Insert, Index: 5, Data: newData}
-	result, err := PerformUpdate(suite.SuiteV1, pk, sl, op)
-	if err != nil {
-		t.Fatalf("PerformUpdate(Insert): %v", err)
-	}
-
-	newBasis, ok, err := VerifyUpdate(pk, basis, op, result)
-	if err != nil {
-		t.Fatalf("VerifyUpdate(Insert): %v", err)
-	}
-	if !ok {
-		t.Fatal("VerifyUpdate(Insert) rejected a valid update")
-	}
-
-	if sl.n != 11 {
-		t.Fatalf("after Insert, sl.n = %d, want 11", sl.n)
-	}
-
-	// The new basis should match the skip list's actual root label.
-	expectedBasis := Basis(sl.rootLabel())
-	if !equal32(newBasis, expectedBasis) {
-		t.Fatalf("new basis mismatch after Insert:\n  got:  %x\n  want: %x", newBasis, expectedBasis)
-	}
-}
-
-// TestDeleteUpdate checks that Delete works for a mid-list block (uses atRank(i-1))
-// and for block 1 (no predecessor proof), and that the basis advances correctly.
-func TestDeleteUpdate(t *testing.T) {
-	pk := makeKey(t)
-
-	for _, idx := range []int{1, 5, 10} {
-		blocks := randomBlocks(t, 10, 32)
-		sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blocks))
-		if err != nil {
-			t.Fatalf("idx=%d Build: %v", idx, err)
-		}
-
-		op := UpdateOp{Kind: Delete, Index: idx}
-		result, err := PerformUpdate(suite.SuiteV1, pk, sl, op)
-		if err != nil {
-			t.Fatalf("idx=%d PerformUpdate(Delete): %v", idx, err)
-		}
-
-		newBasis, ok, err := VerifyUpdate(pk, basis, op, result)
-		if err != nil {
-			t.Fatalf("idx=%d VerifyUpdate(Delete): %v", idx, err)
-		}
-		if !ok {
-			t.Fatalf("idx=%d VerifyUpdate(Delete) rejected a valid update", idx)
-		}
-
-		if sl.n != 9 {
-			t.Fatalf("idx=%d after Delete, sl.n = %d, want 9", idx, sl.n)
-		}
-
-		expectedBasis := Basis(sl.rootLabel())
-		if !equal32(newBasis, expectedBasis) {
-			t.Fatalf("idx=%d basis mismatch after Delete:\n  got:  %x\n  want: %x", idx, newBasis, expectedBasis)
-		}
-
-		// Proofs against the new basis should still work.
-		remaining := make([][]byte, 0, len(blocks)-1)
-		for j, b := range blocks {
-			if j+1 != idx {
-				remaining = append(remaining, b)
+			c := 6
+			if c > n {
+				c = n
+			}
+			chal, err := MakeChallenge(n, c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			proof, err := Prove(suite.SuiteV1, pk, sl, chal, blockstore.NewMemStore(blks))
+			if err != nil {
+				t.Fatalf("n=%d Prove: %v", n, err)
+			}
+			ok, err := Verify(pk, basis, chal, proof)
+			if err != nil {
+				t.Fatalf("n=%d Verify: %v", n, err)
+			}
+			if !ok {
+				t.Fatalf("n=%d trial=%d Verify rejected valid proof", n, trial)
 			}
 		}
-		chal, _ := MakeChallenge(sl.n, 3)
-		proof, err := Prove(suite.SuiteV1, pk, sl, chal, blockstore.NewMemStore(remaining))
+	}
+}
+
+// TestTamperedBlockRejected checks that Verify fails when the server proves
+// against block data that doesn't match the tags recorded in the skip list
+// (§4.2's blockless check, g^M = ∏ T(blockᵢⱼ)^aⱼ, must not accept content
+// the tags never committed to).
+func TestTamperedBlockRejected(t *testing.T) {
+	pk, err := pdp.MakePublicKey(64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 20
+	blks := randBlocks(n)
+	sl, basis, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blks))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	anyRejected := false
+	for trial := 0; trial < 10; trial++ {
+		corrupt := randBlocks(n)
+		chal, err := MakeChallenge(n, 4)
 		if err != nil {
-			t.Fatalf("idx=%d Prove after Delete: %v", idx, err)
+			t.Fatal(err)
 		}
-		ok2, err := VerifyProof(pk, newBasis, chal, proof)
+		proof, err := Prove(suite.SuiteV1, pk, sl, chal, blockstore.NewMemStore(corrupt))
 		if err != nil {
-			t.Fatalf("idx=%d VerifyProof after Delete: %v", idx, err)
+			t.Fatalf("Prove with corrupted blocks: %v", err)
 		}
-		if !ok2 {
-			t.Fatalf("idx=%d VerifyProof after Delete failed", idx)
+		ok, err := Verify(pk, basis, chal, proof)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			anyRejected = true
+		}
+	}
+	if !anyRejected {
+		t.Fatal("every challenge against corrupted block data still verified")
+	}
+}
+
+func TestModifyAtMatchesRebuild(t *testing.T) {
+	pk, _ := pdp.MakePublicKey(64)
+	for _, n := range []int{1, 2, 3, 5, 10, 30} {
+		for trial := 0; trial < 20; trial++ {
+			blks := randBlocks(n)
+			sl, _, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blks))
+			if err != nil {
+				t.Fatal(err)
+			}
+			heights := sl.Heights()
+			pos := 1 + trial%n
+			newData := make([]byte, 32)
+			rand.Read(newData)
+			if err := sl.modifyAt(suite.SuiteV1, pk, pos, newData); err != nil {
+				t.Fatalf("n=%d pos=%d: modifyAt: %v", n, pos, err)
+			}
+			blks[pos-1] = newData
+			_, wantBasis, err := BuildWithHeights(suite.SuiteV1, pk, blockstore.NewMemStore(blks), heights)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotBasis := Basis(sl.startLabel())
+			if !equal32(gotBasis, wantBasis) {
+				t.Fatalf("n=%d trial=%d pos=%d: basis mismatch after modify\n got:  %x\n want: %x", n, trial, pos, gotBasis, wantBasis)
+			}
+			checkAllPositions(t, sl, gotBasis, fmt.Sprintf("n=%d modify pos=%d", n, pos))
+		}
+	}
+}
+
+func TestDeleteAtMatchesRebuild(t *testing.T) {
+	pk, _ := pdp.MakePublicKey(64)
+	for _, n := range []int{2, 3, 5, 10, 30} {
+		for trial := 0; trial < 20; trial++ {
+			blks := randBlocks(n)
+			sl, _, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blks))
+			if err != nil {
+				t.Fatal(err)
+			}
+			heights := sl.Heights()
+			pos := 1 + trial%n
+			if err := sl.deleteAt(pos); err != nil {
+				t.Fatalf("n=%d pos=%d: deleteAt: %v", n, pos, err)
+			}
+			remainingBlks := append(append([][]byte{}, blks[:pos-1]...), blks[pos:]...)
+			remainingHeights := append(append([]int{}, heights[:pos-1]...), heights[pos:]...)
+			_, wantBasis, err := BuildWithHeights(suite.SuiteV1, pk, blockstore.NewMemStore(remainingBlks), remainingHeights)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotBasis := Basis(sl.startLabel())
+			if !equal32(gotBasis, wantBasis) {
+				t.Fatalf("n=%d trial=%d pos=%d: basis mismatch after delete\n got:  %x\n want: %x", n, trial, pos, gotBasis, wantBasis)
+			}
+			checkAllPositions(t, sl, gotBasis, fmt.Sprintf("n=%d delete pos=%d", n, pos))
+		}
+	}
+}
+
+// TestMixedSequence runs a long randomized sequence of low-level
+// insert/modify/delete mutations and checks, after every step, that every
+// position still proves correctly and holds the expected tag — a stress
+// test for the tower/plateau label formula (f) across arbitrary structural
+// change, not just single edits from a fresh build.
+func TestMixedSequence(t *testing.T) {
+	pk, _ := pdp.MakePublicKey(64)
+	blks := randBlocks(3)
+	sl, _, err := Build(suite.SuiteV1, pk, blockstore.NewMemStore(blks))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedTags := make([][]byte, 3)
+	for i, b := range blks {
+		expectedTags[i] = BlockTag(suite.SuiteV1, pk, b).Bytes()
+	}
+
+	ops := []string{}
+	for step := 0; step < 1000; step++ {
+		n := sl.n
+		choice := step % 5
+		switch {
+		case choice < 2 || n <= 1:
+			pos := randIntN(n + 1)
+			h := ChooseHeight(n)
+			data := make([]byte, 32)
+			rand.Read(data)
+			ops = append(ops, fmt.Sprintf("insert@%d h=%d", pos, h))
+			if err := sl.doInsert(suite.SuiteV1, pk, pos+1, data, h); err != nil {
+				t.Fatalf("step %d (%v): doInsert: %v", step, ops, err)
+			}
+			tag := BlockTag(suite.SuiteV1, pk, data).Bytes()
+			expectedTags = append(expectedTags[:pos], append([][]byte{tag}, expectedTags[pos:]...)...)
+		case choice == 2:
+			pos := 1 + randIntN(n)
+			data := make([]byte, 32)
+			rand.Read(data)
+			ops = append(ops, fmt.Sprintf("modify@%d", pos))
+			if err := sl.modifyAt(suite.SuiteV1, pk, pos, data); err != nil {
+				t.Fatalf("step %d (%v): modifyAt: %v", step, ops, err)
+			}
+			expectedTags[pos-1] = BlockTag(suite.SuiteV1, pk, data).Bytes()
+		default:
+			pos := 1 + randIntN(n)
+			ops = append(ops, fmt.Sprintf("delete@%d", pos))
+			if err := sl.deleteAt(pos); err != nil {
+				t.Fatalf("step %d (%v): deleteAt: %v", step, ops, err)
+			}
+			expectedTags = append(expectedTags[:pos-1], expectedTags[pos:]...)
+		}
+
+		if sl.n != len(expectedTags) {
+			t.Fatalf("step %d (%v): sl.n=%d but expected %d blocks", step, ops, sl.n, len(expectedTags))
+		}
+
+		basis := Basis(sl.startLabel())
+		for pos := 1; pos <= sl.n; pos++ {
+			bp, err := sl.atRank(pos)
+			if err != nil {
+				t.Fatalf("step %d (%v): atRank(%d): %v", step, ops, pos, err)
+			}
+			ok, err := verifyPath(basis, pos, bp)
+			if err != nil {
+				t.Fatalf("step %d (%v): verifyPath(%d): %v", step, ops, pos, err)
+			}
+			if !ok {
+				t.Fatalf("step %d (%v): verifyPath(%d) rejected valid proof, n=%d", step, ops, pos, sl.n)
+			}
+			if bp.Target.Tag == nil || string(bp.Target.Tag) != string(expectedTags[pos-1]) {
+				t.Fatalf("step %d (%v): position %d has wrong content (data reordered/lost)", step, ops, pos)
+			}
 		}
 	}
 }
