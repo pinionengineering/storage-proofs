@@ -465,12 +465,13 @@ func TestFullProtocolSmallKeys(t *testing.T) {
 
 	const nBlocks = 10
 	blocks := make([][]byte, nBlocks)
+	ids := make([][]byte, nBlocks)
 	tags := make([]*Tag, nBlocks)
 	for i := range nBlocks {
 		blocks[i] = make([]byte, 64)
 		rand.Read(blocks[i])
-		w := binary.BigEndian.AppendUint64(append([]byte(nil), sk.V...), uint64(i))
-		tags[i], err = TagBlock(suite.SuiteV1, pk, sk, blocks[i], w)
+		ids[i] = binary.BigEndian.AppendUint64(nil, uint64(i))
+		tags[i], err = TagBlock(suite.SuiteV1, pk, sk, blocks[i], ids[i])
 		if err != nil {
 			t.Fatalf("TagBlock[%d]: %v", i, err)
 		}
@@ -500,7 +501,7 @@ func TestFullProtocolSmallKeys(t *testing.T) {
 		t.Fatalf("GenProof: %v", err)
 	}
 
-	ok, err := CheckProof(suite.SuiteV1, pk, sk, s, tags, chal, proof)
+	ok, err := CheckProof(suite.SuiteV1, pk, sk, s, ids, chal, proof)
 	if err != nil {
 		t.Fatalf("CheckProof: %v", err)
 	}
@@ -520,12 +521,13 @@ func TestTamperedBlockFails(t *testing.T) {
 
 	const nBlocks = 10
 	blocks := make([][]byte, nBlocks)
+	ids := make([][]byte, nBlocks)
 	tags := make([]*Tag, nBlocks)
 	for i := range nBlocks {
 		blocks[i] = make([]byte, 64)
 		rand.Read(blocks[i])
-		w := binary.BigEndian.AppendUint64(append([]byte(nil), sk.V...), uint64(i))
-		tags[i], err = TagBlock(suite.SuiteV1, pk, sk, blocks[i], w)
+		ids[i] = binary.BigEndian.AppendUint64(nil, uint64(i))
+		tags[i], err = TagBlock(suite.SuiteV1, pk, sk, blocks[i], ids[i])
 		if err != nil {
 			t.Fatalf("TagBlock[%d]: %v", i, err)
 		}
@@ -556,11 +558,70 @@ func TestTamperedBlockFails(t *testing.T) {
 		t.Fatalf("GenProof: %v", err)
 	}
 
-	ok, err := CheckProof(suite.SuiteV1, pk, sk, s, tags, chal, proof)
+	ok, err := CheckProof(suite.SuiteV1, pk, sk, s, ids, chal, proof)
 	if err != nil {
 		t.Fatalf("CheckProof: %v", err)
 	}
 	if ok {
-		t.Fatal("tampered proof accepted — verification should have failed")
+		t.Fatal("tampered proof accepted, verification should have failed")
+	}
+}
+
+// TestSwappedIdentifierRejected confirms CheckProof rejects a proof when the
+// ids array it is given does not match the ids TagBlock actually used, i.e.
+// the tag/index rebinding case: a dishonest source claims a challenged
+// position holds a different block identifier than the one it was tagged
+// with. Because CheckProof recomputes W_ij = V||ids[ij] itself (see BlockW)
+// rather than trusting a tag-carried W, presenting the wrong ids must make
+// verification fail even though the proof itself was honestly generated
+// against the real tags and blocks.
+func TestSwappedIdentifierRejected(t *testing.T) {
+	pk, sk, err := KeyGen(64)
+	if err != nil {
+		t.Fatalf("KeyGen: %v", err)
+	}
+
+	const nBlocks = 10
+	blocks := make([][]byte, nBlocks)
+	ids := make([][]byte, nBlocks)
+	tags := make([]*Tag, nBlocks)
+	for i := range nBlocks {
+		blocks[i] = make([]byte, 64)
+		rand.Read(blocks[i])
+		ids[i] = binary.BigEndian.AppendUint64(nil, uint64(i))
+		tags[i], err = TagBlock(suite.SuiteV1, pk, sk, blocks[i], ids[i])
+		if err != nil {
+			t.Fatalf("TagBlock[%d]: %v", i, err)
+		}
+	}
+
+	k1 := make([]byte, 16)
+	k2 := make([]byte, 16)
+	rand.Read(k1)
+	rand.Read(k2)
+
+	s, err := rand.Int(rand.Reader, pk.N)
+	if err != nil {
+		t.Fatalf("rand.Int: %v", err)
+	}
+	Gs := new(big.Int).Exp(pk.G, s, pk.N)
+
+	chal := &Challenge{SuiteID: suite.SuiteV1.ID(), C: 4, K1: k1, K2: k2, Gs: Gs}
+
+	proof, err := GenProof(suite.SuiteV1, pk, blockstore.NewMemStore(blocks), chal, tagsMap(tags))
+	if err != nil {
+		t.Fatalf("GenProof: %v", err)
+	}
+
+	// Present ids rotated by one position relative to what tagging actually
+	// used: ids[i] is now the identifier that really belongs at position i-1.
+	swapped := append(append([][]byte{}, ids[nBlocks-1]), ids[:nBlocks-1]...)
+
+	ok, err := CheckProof(suite.SuiteV1, pk, sk, s, swapped, chal, proof)
+	if err != nil {
+		t.Fatalf("CheckProof: %v", err)
+	}
+	if ok {
+		t.Fatal("proof verified against swapped identifiers, rebinding should have been rejected")
 	}
 }

@@ -35,10 +35,11 @@ func TestPDPChallengeGame(t *testing.T) {
 
 	// 2. Client tags each block and would upload (blocks, tags) to the server.
 	blocks := simpleFile(t, 1000)
+	ids := make([][]byte, len(blocks))
 	tags := make([]*Tag, len(blocks))
 	for i := range blocks {
-		w := binary.BigEndian.AppendUint64(append([]byte(nil), sk.V...), uint64(i))
-		tags[i], err = TagBlock(suite.SuiteV1, pk, sk, blocks[i], w)
+		ids[i] = binary.BigEndian.AppendUint64(nil, uint64(i))
+		tags[i], err = TagBlock(suite.SuiteV1, pk, sk, blocks[i], ids[i])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,7 +77,7 @@ func TestPDPChallengeGame(t *testing.T) {
 	}
 
 	// 5. Client verifies the proof using its private s.
-	ok, err := CheckProof(suite.SuiteV1, pk, sk, s, tags, chal, proof)
+	ok, err := CheckProof(suite.SuiteV1, pk, sk, s, ids, chal, proof)
 	if err != nil {
 		t.Fatal(err)
 	}

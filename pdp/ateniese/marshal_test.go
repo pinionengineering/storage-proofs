@@ -86,10 +86,11 @@ func TestAteniesesSecretKeyMarshalUsable(t *testing.T) {
 
 			// Tag blocks using the *original* keys (simulates what was stored at setup time).
 			blocks := simpleFile(t, 10)
+			ids := make([][]byte, len(blocks))
 			tags := make([]*Tag, len(blocks))
 			for i, block := range blocks {
-				w := append(append([]byte(nil), sk.V...), byte(i))
-				tags[i], err = TagBlock(suite.SuiteV1, pk, sk, block, w)
+				ids[i] = []byte{byte(i)}
+				tags[i], err = TagBlock(suite.SuiteV1, pk, sk, block, ids[i])
 				if err != nil {
 					t.Fatalf("TagBlock(%d): %v", i, err)
 				}
@@ -118,7 +119,7 @@ func TestAteniesesSecretKeyMarshalUsable(t *testing.T) {
 			}
 
 			// Client verifies using the *reconstructed* sk2 and pk2.
-			ok, err := CheckProof(suite.SuiteV1, &pk2, &sk2, s, tags, chal, proof)
+			ok, err := CheckProof(suite.SuiteV1, &pk2, &sk2, s, ids, chal, proof)
 			if err != nil {
 				t.Fatalf("CheckProof: %v", err)
 			}
