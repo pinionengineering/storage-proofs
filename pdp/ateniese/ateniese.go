@@ -33,11 +33,13 @@
 //
 // # Deviations from the paper
 //
-// Block data is SHA-256 hashed before use as a group exponent (necessary for
-// arbitrary-length blocks; applied identically in TagBlock and GenProof).
-//
 // pdp.SuiteV1 uses MGF1 (RFC 8017 §B.2.1) with SHA-256 for HashToQRN, producing
 // a near-uniform full-domain hash over QR_N (paper footnote 3, bias < 2^{-128}).
+//
+// Block data m is used directly as the group exponent, matching the paper.
+// Callers should size blocks so exponentiation cost stays reasonable (the
+// paper's experiments use blocks around |N| bits); there is no correctness
+// requirement that m < N.
 //
 // # Scheme variant
 //
@@ -260,13 +262,9 @@ func (sk *SecretKey) UnmarshalJSON(data []byte) error {
 // (e.g. ID bytes) are also supported. The standard
 // W_i = V||encode(i) construction for sequential file blocks is shown in the tests.
 //
-// Deviation from the paper: m is SHA-256 hashed before being used as a group
-// exponent, mapping arbitrary-length block data to a fixed 256-bit integer.
-// GenProof applies the same hash, so the verification equation is unaffected.
-//
 // The tags (but not sk.V) are sent to the server along with the blocks.
 func TagBlock(s *suite.Suite, pk *pdp.PublicKey, sk *SecretKey, m []byte, w []byte) (*Tag, error) {
-	mInt := s.HashBlock(m)
+	mInt := new(big.Int).SetBytes(m)
 
 	h := s.HashToQRN(w, pk.N)                // h(w) ∈ QR_N
 	gm := new(big.Int).Exp(pk.G, mInt, pk.N) // g^m mod N
@@ -277,6 +275,13 @@ func TagBlock(s *suite.Suite, pk *pdp.PublicKey, sk *SecretKey, m []byte, w []by
 	return &Tag{SuiteID: s.ID(), T: T, W: w}, nil
 }
 
+// TagFetcher supplies the tag at index i on demand. GenProof only ever
+// calls it for the c indices its own index derivation (BuildPRP) selects, so
+// a caller can resolve tags via a targeted read per call — e.g. against a
+// partitioned, range-readable storage format — instead of pre-loading every
+// tag belonging to the file up front.
+type TagFetcher func(i int) (*Tag, error)
+
 // GenProof is run by the server to produce a proof of possession for the challenged blocks.
 //
 // All tags must carry the same SuiteID as s; GenProof returns an error on any
@@ -286,18 +291,19 @@ func TagBlock(s *suite.Suite, pk *pdp.PublicKey, sk *SecretKey, m []byte, w []by
 //  1. For 1 ≤ j ≤ C: i_j = π_{k1}(j) via BuildPRP; a_j = f_{k2}(j) via PRF.
 //     (Fig. 2, GenProof step 1)
 //  2. T = ∏ tag_{i_j}^{a_j} mod N. (Fig. 2, GenProof step 2)
-//  3. μ = Σ a_j · SHA-256(block_{i_j}) as an unreduced integer.
+//  3. μ = Σ a_j · block_{i_j} (as an integer) as an unreduced sum.
 //     ρ = SHA-256(g_s^μ mod N), where g_s = chal.Gs = g^s.
-//     (Fig. 2, GenProof step 3; SHA-256 of the block is the deviation noted above.)
+//     (Fig. 2, GenProof step 3)
 //  4. Return V = (T, ρ). (Fig. 2, GenProof step 4)
 //
-// store and tags must have the same length and chal.C must be in [1, store.Len()].
-func GenProof(s *suite.Suite, pk *pdp.PublicKey, store blocks.BlockStore, chal *Challenge, tags []*Tag) (*Proof, error) {
+// tags is called only for the indices this challenge actually samples (i.e.
+// perm[0:chal.C], derived below) — never for every tag belonging to store —
+// and only once BuildPRP has picked those indices, so a caller never needs
+// to derive them itself just to know what to fetch. chal.C must be in
+// [1, store.Len()].
+func GenProof(s *suite.Suite, pk *pdp.PublicKey, store blocks.BlockStore, chal *Challenge, tags TagFetcher) (*Proof, error) {
 	if chal.SuiteID != s.ID() {
 		return nil, fmt.Errorf("challenge suite %d does not match suite %d", chal.SuiteID, s.ID())
-	}
-	if store.Len() != len(tags) {
-		return nil, fmt.Errorf("blocks and tags length mismatch: %d vs %d", store.Len(), len(tags))
 	}
 	if chal.C < 1 || chal.C > store.Len() {
 		return nil, fmt.Errorf("challenge C=%d out of range [1, %d]", chal.C, store.Len())
@@ -311,7 +317,10 @@ func GenProof(s *suite.Suite, pk *pdp.PublicKey, store blocks.BlockStore, chal *
 
 	for j := 1; j <= chal.C; j++ {
 		ij := perm[j-1]
-		tag := tags[ij]
+		tag, err := tags(ij)
+		if err != nil {
+			return nil, fmt.Errorf("ateniese.GenProof: tag %d: %w", ij, err)
+		}
 
 		if tag.SuiteID != s.ID() {
 			return nil, fmt.Errorf("tag[%d] suite %d does not match suite %d", ij, tag.SuiteID, s.ID())
@@ -329,7 +338,7 @@ func GenProof(s *suite.Suite, pk *pdp.PublicKey, store blocks.BlockStore, chal *
 		if err != nil {
 			return nil, fmt.Errorf("ateniese.GenProof: block %d: %w", ij, err)
 		}
-		mu.Add(mu, new(big.Int).Mul(aj, s.HashBlock(block)))
+		mu.Add(mu, new(big.Int).Mul(aj, new(big.Int).SetBytes(block)))
 	}
 
 	// §4.3 Fig. 2, GenProof step 3: ρ = SHA-256(g_s^μ mod N).

@@ -112,7 +112,7 @@ func TestAteniesesSecretKeyMarshalUsable(t *testing.T) {
 			}
 
 			// Server generates proof.
-			proof, err := GenProof(suite.SuiteV1, &pk2, blockstore.NewMemStore(blocks), chal, tags)
+			proof, err := GenProof(suite.SuiteV1, &pk2, blockstore.NewMemStore(blocks), chal, tagsMap(tags))
 			if err != nil {
 				t.Fatalf("GenProof: %v", err)
 			}

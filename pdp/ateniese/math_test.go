@@ -495,7 +495,7 @@ func TestFullProtocolSmallKeys(t *testing.T) {
 		Gs:      Gs,
 	}
 
-	proof, err := GenProof(suite.SuiteV1, pk, blockstore.NewMemStore(blocks), chal, tags)
+	proof, err := GenProof(suite.SuiteV1, pk, blockstore.NewMemStore(blocks), chal, tagsMap(tags))
 	if err != nil {
 		t.Fatalf("GenProof: %v", err)
 	}
@@ -551,7 +551,7 @@ func TestTamperedBlockFails(t *testing.T) {
 		blocks[i] = tampered
 	}
 
-	proof, err := GenProof(suite.SuiteV1, pk, blockstore.NewMemStore(blocks), chal, tags)
+	proof, err := GenProof(suite.SuiteV1, pk, blockstore.NewMemStore(blocks), chal, tagsMap(tags))
 	if err != nil {
 		t.Fatalf("GenProof: %v", err)
 	}

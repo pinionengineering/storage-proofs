@@ -70,7 +70,7 @@ func TestPDPChallengeGame(t *testing.T) {
 	}
 
 	// 4. Server generates proof from the blocks and tags.
-	proof, err := GenProof(suite.SuiteV1, pk, blockstore.NewMemStore(blocks), chal, tags)
+	proof, err := GenProof(suite.SuiteV1, pk, blockstore.NewMemStore(blocks), chal, tagsMap(tags))
 	if err != nil {
 		t.Fatal(err)
 	}
