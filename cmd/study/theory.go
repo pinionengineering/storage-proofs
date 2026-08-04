@@ -82,7 +82,9 @@ func proveTimeScale(scheme string, C, N int) float64 {
 //
 //	C RSA mod-exps; the hash traversal dominates the log N factor.
 //
-// SW-Pub: O(1) — two pairing operations regardless of C.
+// SW-Pub: O(C) — 2 pairings (constant) plus C G1 scalar mults for
+// ∑ νᵢH(Wᵢ); the C scalar mults dominate, so this is not O(1) despite the
+// pairing count itself being fixed.
 // BJO: O(1) — single MAC verify.
 // SW-Priv: O(C).
 func verifyTimeScale(scheme string, C, N int) float64 {
@@ -99,15 +101,48 @@ func verifyTimeScale(scheme string, C, N int) float64 {
 	}
 }
 
-// keyTimeScale returns the relative theoretical setup cost for RSA key sizes.
-// Ateniese tags use the private key d (~2k bits) as the exponent → O(k³).
-// Erway tags use SHA-256(block) (fixed 256-bit exponent) → O(k²).
+// keyTimeScale returns the relative theoretical setup cost for RSA key sizes,
+// N (block count) and block size both held fixed while keyBits varies.
+// Ateniese's TagBlock does two mod-N exponentiations: g^m (m = the raw
+// block, fixed bit length here) then (...)^d with the private key d (~2k
+// bits) — the d exponentiation dominates for growing k, giving O(k³).
+// Erway's BlockTag is g^b mod N with no second exponentiation, where b is
+// the raw block content directly (pdp/erway.BlockTag; not a SHA-256 hash of
+// it, despite that being a natural-sounding guess) — with block size held
+// fixed here, b's bit length is constant, giving O(k²) purely from the
+// modulus growing as 2k bits. This formula only holds because block size is
+// fixed in this sweep; see setupTimeScaleByBlock for what happens when
+// block size itself is the variable — Erway in particular has nothing
+// bounding that term the way Ateniese's k³ term eventually dominates it.
 func keyTimeScale(scheme string, keyBits int) float64 {
 	k := float64(keyBits)
 	if scheme == "Erway" {
 		return k * k
 	}
 	return k * k * k
+}
+
+// setupTimeScaleByBlock returns the relative theoretical setup-time shape as
+// raw block size grows, N and keyBits held fixed. Ateniese and Erway both
+// use the raw block content directly as a modular exponent (the g^m term in
+// pdp/ateniese.TagBlock; the entire g^b in pdp/erway.BlockTag), so cost
+// grows with block bit length — modeled here as linear, the dominant term
+// for realistic block sizes even though Ateniese's tag also pays a
+// block-size-independent O(k³) term from its private-key exponentiation.
+// BJO sizes its field P to exceed the block's byte value
+// (capability.bjoPForBlockSize), so a bigger block means more expensive Z_P
+// arithmetic throughout; modeled with the same linear shape pending a more
+// precise big.Int cost model. SW-Priv/SW-Pub are the reason this chart
+// exists: SectorsPerBlock subdivides a big block into many small, fixed-size
+// sectors before anything touches an exponent, so their cost is expected to
+// stay flat as blockSize grows — the contrast this whole chart is for.
+func setupTimeScaleByBlock(scheme string, blockSize int) float64 {
+	switch scheme {
+	case "SW-Priv", "SW-Pub":
+		return 1
+	default: // Ateniese, Erway, BJO
+		return float64(blockSize)
+	}
 }
 
 // scaleTheory fits the theory shape to all measured points via least-squares.

@@ -60,6 +60,18 @@
     <h2>Setup time vs. RSA key size (Ateniese &amp; Erway)</h2>
     <canvas id="keySweep"></canvas>
   </div>
+  <div class="chart-box">
+    <h2>Setup time vs. block size</h2>
+    <canvas id="blockSizeSetup"></canvas>
+  </div>
+  <div class="chart-box">
+    <h2>Prove time vs. block size</h2>
+    <canvas id="blockSizeProve"></canvas>
+  </div>
+  <div class="chart-box">
+    <h2>Verify time vs. block size</h2>
+    <canvas id="blockSizeVerify"></canvas>
+  </div>
   <div class="chart-box full">
     <h2>Detection probability vs. corruption fraction</h2>
     <canvas id="detection"></canvas>
@@ -175,6 +187,9 @@ makeLineChart('verifyTime', c.verifyTime);
 makeLineChart('chalBytes',  c.chalBytes);
 makeLineChart('proofBytes', c.proofBytes);
 makeLineChart('keySweep',   c.keySweep);
+makeLineChart('blockSizeSetup',  c.blockSizeSetup);
+makeLineChart('blockSizeProve',  c.blockSizeProve);
+makeLineChart('blockSizeVerify', c.blockSizeVerify);
 makeLineChart('detection',  c.detection);
 makeLineChart('extraction', c.extraction);
 makeSuiteChart('suiteSweep', c.suiteSweep);

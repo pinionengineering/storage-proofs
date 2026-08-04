@@ -157,7 +157,21 @@ func timeOp(reps int, f func() error) (int64, error) {
 	return (cpuMicros(after) - cpuMicros(before)) / int64(reps), nil
 }
 
-func randomBlocks(n int) [][]byte        { return randomBlocksOfSize(n, fixedBlockSz) }
+// rawBlockSizeFor returns the per-block byte size to use for sch in the
+// general sweeps (matrix, detection, extraction). BJO gets its own small
+// size since its block is used directly as a Z_P element with no
+// sub-block partitioning (see bjoBlockSz's doc comment); every other
+// scheme uses fixedBlockSz, which SW-Priv/SW-Pub subdivide via
+// SectorsPerBlock and Ateniese/Erway use as a raw (and realistically
+// sized) RSA exponent.
+func rawBlockSizeFor(sch schemeSpec) int {
+	if sch.Name == "BJO" {
+		return bjoBlockSz
+	}
+	return fixedBlockSz
+}
+
+func randomBlocks(n int) [][]byte { return randomBlocksOfSize(n, fixedBlockSz) }
 func randomBlocksOfSize(n, sz int) [][]byte {
 	blks := make([][]byte, n)
 	for i := range n {
