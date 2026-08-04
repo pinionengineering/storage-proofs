@@ -32,7 +32,6 @@ type wireChal struct {
 type wireTag struct {
 	SuiteID uint8    `json:"suite_id"`
 	T       *big.Int `json:"t"`
-	W       []byte   `json:"w"`
 }
 
 type wireProof struct {
@@ -41,7 +40,7 @@ type wireProof struct {
 }
 
 func encodeTag(tag *pdpateniese.Tag) (line.Tag, error) {
-	b, err := json.Marshal(wireTag{SuiteID: tag.SuiteID, T: tag.T, W: tag.W})
+	b, err := json.Marshal(wireTag{SuiteID: tag.SuiteID, T: tag.T})
 	return line.Tag(b), err
 }
 
@@ -50,13 +49,7 @@ func decodeTag(b line.Tag) (*pdpateniese.Tag, error) {
 	if err := json.Unmarshal(b, &wt); err != nil {
 		return nil, err
 	}
-	return &pdpateniese.Tag{SuiteID: wt.SuiteID, T: wt.T, W: wt.W}, nil
-}
-
-// blockW returns the per-block W identifier V ‖ id. §4.3 requires distinct W_i
-// per block; binding to the block's own store ID achieves this naturally.
-func blockW(v, id []byte) []byte {
-	return append(append([]byte(nil), v...), id...)
+	return &pdpateniese.Tag{SuiteID: wt.SuiteID, T: wt.T}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -86,8 +79,7 @@ func (t *Tagger) TagBlocks(store blocks.BlockStore) ([]line.Tag, error) {
 		if err != nil {
 			return nil, fmt.Errorf("ateniese.TagBlocks[%d]: %w", i, err)
 		}
-		w := blockW(t.sk.V, id)
-		tag, err := pdpateniese.TagBlock(t.s, t.pk, t.sk, block, w)
+		tag, err := pdpateniese.TagBlock(t.s, t.pk, t.sk, block, id)
 		if err != nil {
 			return nil, fmt.Errorf("ateniese.TagBlocks[%d]: %w", i, err)
 		}
@@ -111,25 +103,18 @@ func (t *Tagger) TagBlocks(store blocks.BlockStore) ([]line.Tag, error) {
 // Each call to Challenge returns a bound Validator carrying that round's secret,
 // so concurrent or pipelined audit rounds are safe.
 type Challenger struct {
-	pk   *pdp.PublicKey
-	sk   *pdpateniese.SecretKey
-	s    *suite.Suite
-	tags []*pdpateniese.Tag
-	c    int // blocks per challenge
+	pk *pdp.PublicKey
+	sk *pdpateniese.SecretKey
+	s  *suite.Suite
+	c  int // blocks per challenge
 }
 
-// NewChallenger constructs a Challenger. tags are the opaque bytes returned by Tagger.TagBlocks.
-// c is the number of blocks to include in each challenge.
-func NewChallenger(pk *pdp.PublicKey, sk *pdpateniese.SecretKey, s *suite.Suite, tags []line.Tag, c int) (*Challenger, error) {
-	decoded := make([]*pdpateniese.Tag, len(tags))
-	for i, t := range tags {
-		tag, err := decodeTag(t)
-		if err != nil {
-			return nil, fmt.Errorf("ateniese.NewChallenger: tag %d: %w", i, err)
-		}
-		decoded[i] = tag
-	}
-	return &Challenger{pk: pk, sk: sk, s: s, tags: decoded, c: c}, nil
+// NewChallenger constructs a Challenger. c is the number of blocks to include
+// in each challenge. Unlike GenProof's server side, CheckProof (via the
+// Validator Challenge returns) never needs tag values, only the ids Challenge
+// itself is given, so no tags are threaded through here.
+func NewChallenger(pk *pdp.PublicKey, sk *pdpateniese.SecretKey, s *suite.Suite, c int) (*Challenger, error) {
+	return &Challenger{pk: pk, sk: sk, s: s, c: c}, nil
 }
 
 // DetectionProbability returns the probability that a single challenge catches
@@ -172,7 +157,9 @@ func (c *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, er
 	if err != nil {
 		return nil, nil, fmt.Errorf("ateniese.Challenge: marshal: %w", err)
 	}
-	v := &roundValidator{pk: c.pk, sk: c.sk, s: c.s, tags: c.tags, secret: s}
+	idsCopy := make([][]byte, len(ids))
+	copy(idsCopy, ids)
+	v := &roundValidator{pk: c.pk, sk: c.sk, s: c.s, ids: idsCopy, secret: s}
 	return line.Challenge(b), v, nil
 }
 
@@ -191,11 +178,15 @@ func (c *Challenger) ChalBytes(chal line.Challenge) int {
 // roundValidator (implements Validator for one ateniese round)
 // ---------------------------------------------------------------------------
 
+// roundValidator's ids are the client's own trusted record of block
+// identifiers, captured at Challenge time from that call's own ids
+// parameter. CheckProof self-derives each challenged W from sk.V and ids
+// (see pdp/ateniese's BlockW), so no tag values are needed here at all.
 type roundValidator struct {
 	pk     *pdp.PublicKey
 	sk     *pdpateniese.SecretKey
 	s      *suite.Suite
-	tags   []*pdpateniese.Tag
+	ids    [][]byte
 	secret *big.Int
 }
 
@@ -208,7 +199,7 @@ func (v *roundValidator) Verify(chal line.Challenge, proof line.Proof) (bool, er
 	if err := json.Unmarshal(proof, &wp); err != nil {
 		return false, fmt.Errorf("ateniese.Verify: proof: %w", err)
 	}
-	return pdpateniese.CheckProof(v.s, v.pk, v.sk, v.secret, v.tags,
+	return pdpateniese.CheckProof(v.s, v.pk, v.sk, v.secret, v.ids,
 		&pdpateniese.Challenge{SuiteID: wc.SuiteID, C: wc.C, K1: wc.K1, K2: wc.K2, Gs: wc.Gs},
 		&pdpateniese.Proof{T: wp.T, Rho: wp.Rho},
 	)
@@ -225,16 +216,20 @@ type wireSetup struct {
 	PKG      *big.Int   `json:"pk_g"`
 }
 
+// wireClientSetup carries what the client needs to reconstruct a Challenger.
+// It has no Tags field: CheckProof (via Challenger's Validator) never needs
+// tag values, only the ids each Challenge call is given, so the client has
+// no reason to retain tags past setup, matching the paper's own step 1 (C
+// deletes its local copies of the blocks and tags, keeping only pk, sk).
 type wireClientSetup struct {
-	Protocol string     `json:"protocol"`
-	SuiteID  uint8      `json:"suite_id"`
-	PKN      *big.Int   `json:"pk_n"`
-	PKG      *big.Int   `json:"pk_g"`
-	SKE      *big.Int   `json:"sk_e"`
-	SKD      *big.Int   `json:"sk_d"`
-	SKV      []byte     `json:"sk_v"`
-	SKPhi    *big.Int   `json:"sk_phi"`
-	Tags     []line.Tag `json:"tags"`
+	Protocol string   `json:"protocol"`
+	SuiteID  uint8    `json:"suite_id"`
+	PKN      *big.Int `json:"pk_n"`
+	PKG      *big.Int `json:"pk_g"`
+	SKE      *big.Int `json:"sk_e"`
+	SKD      *big.Int `json:"sk_d"`
+	SKV      []byte   `json:"sk_v"`
+	SKPhi    *big.Int `json:"sk_phi"`
 }
 
 func encodeTags(cached []*pdpateniese.Tag) ([]line.Tag, error) {
@@ -257,22 +252,12 @@ func (t *Tagger) ProverSetup() ([]byte, error) {
 	return json.Marshal(wireSetup{Protocol: "ateniese", Tags: tags, PKN: t.pk.N, PKG: t.pk.G})
 }
 
-// ProverSetupFromTags implements line.ExternalSetupProducer.
-func (t *Tagger) ProverSetupFromTags(tags []line.Tag) ([]byte, error) {
-	return json.Marshal(wireSetup{Protocol: "ateniese", Tags: tags, PKN: t.pk.N, PKG: t.pk.G})
-}
-
 func (t *Tagger) ClientSetup() ([]byte, error) {
-	tags, err := encodeTags(t.cachedTags)
-	if err != nil {
-		return nil, fmt.Errorf("ateniese.ClientSetup: %w", err)
-	}
 	return json.Marshal(wireClientSetup{
 		Protocol: "ateniese",
 		SuiteID:  t.s.ID(),
 		PKN:      t.pk.N, PKG: t.pk.G,
 		SKE: t.sk.E, SKD: t.sk.D, SKV: t.sk.V, SKPhi: t.sk.Phi,
-		Tags: tags,
 	})
 }
 
@@ -301,7 +286,7 @@ func (challengerFactory) NewChallenger(setup []byte, c int) (line.Challenger, er
 	}
 	pk := &pdp.PublicKey{N: ws.PKN, G: ws.PKG}
 	sk := &pdpateniese.SecretKey{E: ws.SKE, D: ws.SKD, V: ws.SKV, Phi: ws.SKPhi}
-	return NewChallenger(pk, sk, s, ws.Tags, c)
+	return NewChallenger(pk, sk, s, c)
 }
 
 // ---------------------------------------------------------------------------
@@ -310,9 +295,12 @@ func (challengerFactory) NewChallenger(setup []byte, c int) (line.Challenger, er
 
 type proverFactory struct{}
 
-// NewProverFactory returns a ProverFactory that builds an ateniese Prover from
-// the setup payload produced by Tagger.ProverSetup.
-func NewProverFactory() line.ProverFactory { return proverFactory{} }
+var _ line.SparseProverFactory = proverFactory{}
+
+// NewProverFactory returns a ProverFactory (also usable as a
+// SparseProverFactory) that builds an ateniese Prover from the setup payload
+// produced by Tagger.ProverSetup.
+func NewProverFactory() line.SparseProverFactory { return proverFactory{} }
 
 func (proverFactory) NewProver(setup []byte, _ blocks.BlockStore) (line.Prover, error) {
 	var ws wireSetup
@@ -322,27 +310,49 @@ func (proverFactory) NewProver(setup []byte, _ blocks.BlockStore) (line.Prover, 
 	return NewProver(&pdp.PublicKey{N: ws.PKN, G: ws.PKG}, ws.Tags)
 }
 
+// NewProverFromTagStore implements line.SparseProverFactory: builds a
+// Prover that fetches tags on demand from tags, instead of requiring the
+// full dense tag list NewProver does. setup's Tags field, if any, is
+// ignored; only PKN/PKG are read, so a caller that wants a smaller setup
+// blob than ProverSetup produces can omit Tags entirely.
+//
+// Unlike sw/swpub, this adapter does not derive challenge indices itself
+// before calling into the math layer: pdp/ateniese.GenProof derives them
+// internally via BuildPRP (§4.3 Fig. 2 step 1) and is given a TagFetcher
+// closure instead, so the permutation is computed exactly once per proof,
+// inside GenProof.
+func (proverFactory) NewProverFromTagStore(setup []byte, tags line.TagStore) (line.Prover, error) {
+	var ws wireSetup
+	if err := json.Unmarshal(setup, &ws); err != nil {
+		return nil, fmt.Errorf("ateniese.NewProverFromTagStore: %w", err)
+	}
+	return &Prover{pk: &pdp.PublicKey{N: ws.PKN, G: ws.PKG}, tags: tags}, nil
+}
+
 // ---------------------------------------------------------------------------
 // Prover
 // ---------------------------------------------------------------------------
 
-// Prover implements line.Prover for the S-PDP scheme.
+// Prover implements line.Prover for the S-PDP scheme. tags is a
+// line.TagStore rather than a decoded, dense array; Prove decodes tags on
+// demand for exactly the indices GenProof's own index derivation selects,
+// whether tags is backed by an in-memory line.TagMap (NewProver's dense
+// construction) or a real targeted-read store (NewProverFromTagStore).
 type Prover struct {
 	pk   *pdp.PublicKey
-	tags []*pdpateniese.Tag
+	tags line.TagStore
 }
 
-// NewProver constructs a Prover. tags are the opaque bytes returned by Tagger.TagBlocks.
+// NewProver constructs a Prover from the full, dense tag list returned by
+// Tagger.TagBlocks (tags[i] is block i's tag). For a construction that
+// fetches tags on demand rather than holding them all, see
+// NewProverFromTagStore.
 func NewProver(pk *pdp.PublicKey, tags []line.Tag) (*Prover, error) {
-	decoded := make([]*pdpateniese.Tag, len(tags))
+	m := make(line.TagMap, len(tags))
 	for i, t := range tags {
-		tag, err := decodeTag(t)
-		if err != nil {
-			return nil, fmt.Errorf("ateniese.NewProver: tag %d: %w", i, err)
-		}
-		decoded[i] = tag
+		m[i] = t
 	}
-	return &Prover{pk: pk, tags: decoded}, nil
+	return &Prover{pk: pk, tags: m}, nil
 }
 
 // ProofBytes returns the binary size of a proof: byte length of T plus Rho.
@@ -366,9 +376,20 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 		return nil, fmt.Errorf("ateniese.Prove: unknown suite %d", wc.SuiteID)
 	}
 
+	// GenProof calls this only for the indices its own BuildPRP derivation
+	// selects. For a sparse p.tags this is where the targeted range read
+	// happens; for a dense p.tags (line.TagMap) it's an in-memory lookup.
+	fetchTag := func(idx int) (*pdpateniese.Tag, error) {
+		t, err := p.tags.Tag(idx)
+		if err != nil {
+			return nil, err
+		}
+		return decodeTag(t)
+	}
+
 	proof, err := pdpateniese.GenProof(s, p.pk, store,
 		&pdpateniese.Challenge{SuiteID: wc.SuiteID, C: wc.C, K1: wc.K1, K2: wc.K2, Gs: wc.Gs},
-		p.tags,
+		fetchTag,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ateniese.Prove: %w", err)

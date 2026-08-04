@@ -8,6 +8,7 @@ package line
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/pinionengineering/storage-proofs/blocks"
 )
@@ -18,6 +19,30 @@ var ErrInsufficientProofs = errors.New("insufficient proofs for extraction")
 
 // Tag is opaque per-block authentication metadata produced by a Tagger.
 type Tag []byte
+
+// TagStore provides on-demand, index-keyed access to a file's tags —
+// mirrors blocks.BlockStore's role for block content (Block(id), fetched
+// lazily per challenged position). A Prover built from a TagStore only ever
+// calls Tag(i) for the specific indices a challenge samples, so a real
+// implementation backed by a partitioned, range-readable storage format can
+// resolve and fetch each one with a targeted read, never materializing tags
+// for the whole file.
+type TagStore interface {
+	Tag(i int) (Tag, error)
+}
+
+// TagMap adapts an already-resolved map to TagStore — for tests, or a
+// caller (like ProverFactory.NewProver's dense construction) that already
+// has every tag in hand and just needs the same on-demand-lookup shape.
+type TagMap map[int]Tag
+
+func (m TagMap) Tag(i int) (Tag, error) {
+	t, ok := m[i]
+	if !ok {
+		return nil, fmt.Errorf("line: TagMap: no tag for index %d", i)
+	}
+	return t, nil
+}
 
 // Challenge is an opaque audit challenge produced by a Challenger.
 type Challenge []byte
@@ -82,23 +107,32 @@ type SetupProducer interface {
 	EncodedBlocks() blocks.BlockStore
 }
 
-// ExternalSetupProducer is implemented by Taggers whose ProverSetup can be
-// built from a caller-supplied tag list, without TagBlocks having been called
-// on this same instance. Needed by callers that compute tags across several
-// separate TagBlocks calls (e.g. on disjoint block ranges, possibly on
-// different Tagger instances) and then need to build one combined
-// ProverSetup from the concatenated result.
-type ExternalSetupProducer interface {
-	// ProverSetupFromTags returns the same payload ProverSetup would, using
-	// tags in place of whatever this instance's own TagBlocks call cached.
-	ProverSetupFromTags(tags []Tag) ([]byte, error)
-}
-
 // ProverFactory builds a Prover on the server side from a setup payload
 // produced by SetupProducer.ProverSetup. store holds the blocks the server
 // has already stored.
 type ProverFactory interface {
 	NewProver(setup []byte, store blocks.BlockStore) (Prover, error)
+}
+
+// SparseProverFactory is implemented by ProverFactories whose Prover can be
+// constructed from a TagStore instead of the full dense tag array NewProver
+// requires. The returned Prover only ever calls TagStore.Tag(i) for the
+// specific indices its own challenge-derivation picks — the same point in
+// its existing Prove() flow that already needs those indices for other
+// reasons — so no separate up-front "learn which indices, then fetch, then
+// construct" step is needed: the caller builds a TagStore once (e.g. backed
+// by a targeted storage range-read per index) and hands it over.
+//
+// This does not change the cost of deriving *which* indices a challenge
+// samples — line.DeriveChallenge and suite.BuildPRP both still rank every
+// block identifier to pick the sampled subset, an existing O(N) cost. What
+// it removes is the cost of fetching tag *data* for the whole file once the
+// sampled positions are known — that part drops from O(N) to O(len(indices)).
+type SparseProverFactory interface {
+	ProverFactory
+	// NewProverFromTagStore builds a Prover that fetches tags on demand from
+	// tags, instead of requiring the full dense tag list NewProver does.
+	NewProverFromTagStore(setup []byte, tags TagStore) (Prover, error)
 }
 
 // ChallengerFactory builds a Challenger from a client setup blob produced by

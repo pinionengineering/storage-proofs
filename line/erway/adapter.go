@@ -31,16 +31,26 @@ type wireChal struct {
 }
 
 type wireProofStep struct {
-	Level    int    `json:"level"`
-	Rank     int    `json:"rank"`
-	Right    bool   `json:"right"`
-	SibLabel []byte `json:"sib_label"`
-	Q        int    `json:"q"`
+	Level            int    `json:"level"`
+	Rank             int    `json:"rank"`
+	Right            bool   `json:"right"`
+	TowerPassthrough bool   `json:"tower_passthrough"`
+	SibLabel         []byte `json:"sib_label"`
+}
+
+// wireZeroEntry mirrors pdp/erway's zeroEntry (a block's raw rank and tag,
+// elem(v) in Goodrich-Tamassia-Schwerin §4.2 terms). zeroEntry itself is
+// unexported, so it is encoded/decoded field-by-field rather than by name.
+type wireZeroEntry struct {
+	Rank int    `json:"rank"`
+	Tag  []byte `json:"tag"`
 }
 
 type wireBlockProof struct {
-	Tag   []byte          `json:"tag"`
-	Steps []wireProofStep `json:"steps"`
+	Target         wireZeroEntry   `json:"target"`
+	TargetRightVal []byte          `json:"target_right_val"`
+	TargetIsTower  bool            `json:"target_is_tower"`
+	Steps          []wireProofStep `json:"steps"`
 }
 
 type wireProof struct {
@@ -57,14 +67,19 @@ func encodeProof(p *pdperway.Proof) (line.Proof, error) {
 		steps := make([]wireProofStep, len(bp.Steps))
 		for j, st := range bp.Steps {
 			steps[j] = wireProofStep{
-				Level:    st.Level,
-				Rank:     st.Rank,
-				Right:    st.Right,
-				SibLabel: st.SibLabel,
-				Q:        st.Q,
+				Level:            st.Level,
+				Rank:             st.Rank,
+				Right:            st.Right,
+				TowerPassthrough: st.TowerPassthrough,
+				SibLabel:         st.SibLabel,
 			}
 		}
-		wp.Blocks[i] = wireBlockProof{Tag: bp.Tag, Steps: steps}
+		wp.Blocks[i] = wireBlockProof{
+			Target:         wireZeroEntry{Rank: bp.Target.Rank, Tag: bp.Target.Tag},
+			TargetRightVal: bp.TargetRightVal,
+			TargetIsTower:  bp.TargetIsTower,
+			Steps:          steps,
+		}
 	}
 	b, err := json.Marshal(wp)
 	return line.Proof(b), err
@@ -83,14 +98,23 @@ func decodeProof(b line.Proof) (*pdperway.Proof, error) {
 		steps := make([]pdperway.ProofStep, len(wb.Steps))
 		for j, st := range wb.Steps {
 			steps[j] = pdperway.ProofStep{
-				Level:    st.Level,
-				Rank:     st.Rank,
-				Right:    st.Right,
-				SibLabel: st.SibLabel,
-				Q:        st.Q,
+				Level:            st.Level,
+				Rank:             st.Rank,
+				Right:            st.Right,
+				TowerPassthrough: st.TowerPassthrough,
+				SibLabel:         st.SibLabel,
 			}
 		}
-		p.Blocks[i] = pdperway.BlockProof{Tag: wb.Tag, Steps: steps}
+		// zeroEntry is unexported in pdp/erway, so Target (an exported field
+		// of that unexported type) is populated by assigning its own exported
+		// Rank/Tag fields rather than by a composite literal naming the type.
+		var bp pdperway.BlockProof
+		bp.Target.Rank = wb.Target.Rank
+		bp.Target.Tag = wb.Target.Tag
+		bp.TargetRightVal = wb.TargetRightVal
+		bp.TargetIsTower = wb.TargetIsTower
+		bp.Steps = steps
+		p.Blocks[i] = bp
 	}
 	return p, nil
 }
@@ -309,10 +333,11 @@ func (p *Prover) ProofBytes(proof line.Proof) int {
 	}
 	n := len(pp.M.Bytes())
 	for _, bp := range pp.Blocks {
-		n += len(bp.Tag)
+		// Target.Rank(4) + Target.Tag + TargetRightVal + TargetIsTower(1)
+		n += 4 + len(bp.Target.Tag) + len(bp.TargetRightVal) + 1
 		for _, step := range bp.Steps {
-			// Level(4) + Rank(4) + Right(1) + SibLabel + Q(4)
-			n += 9 + len(step.SibLabel)
+			// Level(4) + Rank(4) + Right(1) + TowerPassthrough(1) + SibLabel
+			n += 10 + len(step.SibLabel)
 		}
 	}
 	return n
@@ -388,7 +413,7 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 	if err != nil {
 		return false, fmt.Errorf("erway.Verify: proof: %w", err)
 	}
-	return pdperway.VerifyProof(v.pk,
+	return pdperway.Verify(v.pk,
 		v.basis,
 		&pdperway.Challenge{Indices: indices1, Coeffs: coeffs, N: wc.N},
 		p,

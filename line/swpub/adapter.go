@@ -127,19 +127,6 @@ func (t *Tagger) ProverSetup() ([]byte, error) {
 	})
 }
 
-// ProverSetupFromTags implements line.ExternalSetupProducer.
-func (t *Tagger) ProverSetupFromTags(tags []line.Tag) ([]byte, error) {
-	raw := make([][]byte, len(tags))
-	for i, tg := range tags {
-		raw[i] = []byte(tg)
-	}
-	return json.Marshal(wireProverSetup{
-		Protocol: "swpub",
-		S:        t.ps.S(),
-		Tags:     raw,
-	})
-}
-
 // EncodedBlocks returns the original store; SW-Pub does not transform blocks.
 func (t *Tagger) EncodedBlocks() blocks.BlockStore { return t.store }
 
@@ -187,15 +174,35 @@ func (challengerFactory) NewChallenger(setup []byte, c int) (line.Challenger, er
 
 type proverFactory struct{}
 
-// NewProverFactory returns a ProverFactory for the SW-Pub scheme.
-func NewProverFactory() line.ProverFactory { return proverFactory{} }
+var _ line.SparseProverFactory = proverFactory{}
+
+// NewProverFactory returns a ProverFactory (also usable as a
+// SparseProverFactory) for the SW-Pub scheme.
+func NewProverFactory() line.SparseProverFactory { return proverFactory{} }
 
 func (proverFactory) NewProver(setup []byte, _ blocks.BlockStore) (line.Prover, error) {
 	var ws wireProverSetup
 	if err := json.Unmarshal(setup, &ws); err != nil {
 		return nil, fmt.Errorf("swpub.NewProver: %w", err)
 	}
-	return &Prover{s: ws.S, tags: ws.Tags}, nil
+	m := make(line.TagMap, len(ws.Tags))
+	for i, t := range ws.Tags {
+		m[i] = t
+	}
+	return &Prover{s: ws.S, tags: m}, nil
+}
+
+// NewProverFromTagStore implements line.SparseProverFactory: builds a
+// Prover that fetches tags on demand from tags, instead of requiring the
+// full dense tag list NewProver does. setup's Tags field, if any, is
+// ignored — only S is read (a caller that wants a smaller setup blob than
+// ProverSetup produces can omit Tags entirely).
+func (proverFactory) NewProverFromTagStore(setup []byte, tags line.TagStore) (line.Prover, error) {
+	var ws wireProverSetup
+	if err := json.Unmarshal(setup, &ws); err != nil {
+		return nil, fmt.Errorf("swpub.NewProverFromTagStore: %w", err)
+	}
+	return &Prover{s: ws.S, tags: tags}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -237,11 +244,14 @@ func (ch *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, e
 // Prover
 // ---------------------------------------------------------------------------
 
-// Prover implements line.Prover for the SW public-key scheme.
-// It holds the per-block G1 tags produced by TagBlocks.
+// Prover implements line.Prover for the SW public-key scheme. tags is a
+// line.TagStore rather than a decoded, dense array — Prove fetches tags on
+// demand for exactly the indices its challenge derivation selects, whether
+// tags is backed by an in-memory line.TagMap (NewProver's dense
+// construction) or a real targeted-read store (NewProverFromTagStore).
 type Prover struct {
 	s    int
-	tags [][]byte // n × 64-byte G1 marshals
+	tags line.TagStore // block index -> 64-byte G1 marshal
 }
 
 // ProofBytes returns the binary size of a proof: 64-byte G1 sigma plus
@@ -269,8 +279,22 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 	}
 	indices, coeffs := line.DeriveChallenge(s, wc.Seed, store.IDs(), wc.C, bn254Order)
 	swChal := &porsw.SWChallenge{Kind: porsw.PubKind, Indices: indices, Coeffs: coeffs}
+
+	// Fetch tags for exactly the derived indices — the only ones
+	// RespondFetch below will touch. p.tags is a line.TagStore, so for a
+	// sparse construction this is where the targeted range read happens;
+	// for a dense construction (line.TagMap) it's an in-memory lookup.
+	sparseTags := make(map[int][]byte, len(indices))
+	for _, idx := range indices {
+		t, err := p.tags.Tag(idx)
+		if err != nil {
+			return nil, fmt.Errorf("swpub.Prove: tag %d: %w", idx, err)
+		}
+		sparseTags[idx] = []byte(t)
+	}
+
 	// RespondFetch only reads ps.s from the scheme; no keypair needed.
-	resp, err := porsw.NewPubSchemeFromKey(nil, p.s).RespondFetch(p.tags, swChal, store)
+	resp, err := porsw.NewPubSchemeFromKey(nil, p.s).RespondFetch(sparseTags, swChal, store)
 	if err != nil {
 		return nil, fmt.Errorf("swpub.Prove: %w", err)
 	}

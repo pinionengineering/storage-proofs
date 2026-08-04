@@ -104,12 +104,6 @@ func (t *Tagger) ProverSetup() ([]byte, error) {
 	return json.Marshal(wireSetup{Protocol: "sw", S: p.S, P: p.P, Tags: t.tags})
 }
 
-// ProverSetupFromTags implements line.ExternalSetupProducer.
-func (t *Tagger) ProverSetupFromTags(tags []line.Tag) ([]byte, error) {
-	p := t.sk.Params
-	return json.Marshal(wireSetup{Protocol: "sw", S: p.S, P: p.P, Tags: tags})
-}
-
 func (t *Tagger) ClientSetup() ([]byte, error) {
 	p := t.sk.Params
 	return json.Marshal(wireClientSetup{
@@ -181,9 +175,12 @@ func (challengerFactory) NewChallenger(setup []byte, c int) (line.Challenger, er
 
 type proverFactory struct{}
 
-// NewProverFactory returns a ProverFactory that builds an SW Prover from
-// the setup payload produced by Tagger.ProverSetup.
-func NewProverFactory() line.ProverFactory { return proverFactory{} }
+var _ line.SparseProverFactory = proverFactory{}
+
+// NewProverFactory returns a ProverFactory (also usable as a
+// SparseProverFactory) that builds an SW Prover from the setup payload
+// produced by Tagger.ProverSetup.
+func NewProverFactory() line.SparseProverFactory { return proverFactory{} }
 
 func (proverFactory) NewProver(setup []byte, _ blocks.BlockStore) (line.Prover, error) {
 	var ws wireSetup
@@ -191,6 +188,19 @@ func (proverFactory) NewProver(setup []byte, _ blocks.BlockStore) (line.Prover, 
 		return nil, fmt.Errorf("sw.NewProver: %w", err)
 	}
 	return NewProverFromWire(ws.S, ws.P, ws.Tags)
+}
+
+// NewProverFromTagStore implements line.SparseProverFactory: builds a
+// Prover that fetches tags on demand from tags, instead of requiring the
+// full dense tag list NewProver does. setup's Tags field, if any, is
+// ignored — only S/P are read (a caller that wants a smaller setup blob
+// than ProverSetup produces can omit Tags entirely).
+func (proverFactory) NewProverFromTagStore(setup []byte, tags line.TagStore) (line.Prover, error) {
+	var ws wireSetup
+	if err := json.Unmarshal(setup, &ws); err != nil {
+		return nil, fmt.Errorf("sw.NewProverFromTagStore: %w", err)
+	}
+	return &Prover{params: &porsw.Params{S: ws.S, P: ws.P}, tags: tags}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -241,10 +251,14 @@ func (ch *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, e
 // Prover
 // ---------------------------------------------------------------------------
 
-// Prover implements line.Prover for the SW private-key scheme.
+// Prover implements line.Prover for the SW private-key scheme. tags is a
+// line.TagStore rather than a decoded, dense array — Prove decodes tags on
+// demand for exactly the indices its challenge derivation selects, whether
+// tags is backed by an in-memory line.TagMap (NewProver's dense
+// construction) or a real targeted-read store (NewProverFromTagStore).
 type Prover struct {
 	params *porsw.Params
-	tags   []*porsw.Tag
+	tags   line.TagStore
 }
 
 // NewProverFromWire builds a server-side Prover from primitive wire values,
@@ -253,17 +267,23 @@ func NewProverFromWire(s int, p *big.Int, tags []line.Tag) (*Prover, error) {
 	return NewProver(&porsw.Params{S: s, P: p}, tags)
 }
 
-// NewProver constructs a Prover from opaque tags returned by Tagger.TagBlocks.
+// NewProver constructs a Prover from the full, dense tag list returned by
+// Tagger.TagBlocks (tags[i] is block i's tag). For a construction that
+// fetches tags on demand rather than holding them all, see
+// NewProverFromTagStore.
 func NewProver(params *porsw.Params, tags []line.Tag) (*Prover, error) {
-	decoded := make([]*porsw.Tag, len(tags))
+	m := make(line.TagMap, len(tags))
 	for i, t := range tags {
-		var wt wireTag
-		if err := json.Unmarshal(t, &wt); err != nil {
-			return nil, fmt.Errorf("sw.NewProver: tag %d: %w", i, err)
-		}
-		decoded[i] = &porsw.Tag{Sigma: wt.Sigma}
+		m[i] = t
 	}
-	return &Prover{params: params, tags: decoded}, nil
+	return &Prover{params: params, tags: m}, nil
+}
+
+// NewProverFromTagStore implements line.SparseProverFactory: builds a
+// Prover that fetches tags on demand from tags, instead of requiring the
+// full dense tag list NewProver does.
+func NewProverFromTagStore(params *porsw.Params, tags line.TagStore) (*Prover, error) {
+	return &Prover{params: params, tags: tags}, nil
 }
 
 // ProofBytes returns the binary size of a proof: sigma plus each mu value.
@@ -292,7 +312,24 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 	ids := store.IDs()
 	indices, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, p.params.P)
 
-	proof, err := porsw.RespondFetch(p.params, p.tags,
+	// Fetch and decode tags for exactly the derived indices — the only ones
+	// porsw.RespondFetch below will touch. p.tags is a line.TagStore, so for
+	// a sparse construction this is where the targeted range read happens;
+	// for a dense construction (line.TagMap) it's an in-memory lookup.
+	sparseTags := make(map[int]*porsw.Tag, len(indices))
+	for _, idx := range indices {
+		t, err := p.tags.Tag(idx)
+		if err != nil {
+			return nil, fmt.Errorf("sw.Prove: tag %d: %w", idx, err)
+		}
+		var wt wireTag
+		if err := json.Unmarshal(t, &wt); err != nil {
+			return nil, fmt.Errorf("sw.Prove: tag %d: %w", idx, err)
+		}
+		sparseTags[idx] = &porsw.Tag{Sigma: wt.Sigma}
+	}
+
+	proof, err := porsw.RespondFetch(p.params, sparseTags,
 		&porsw.Challenge{Indices: indices, Coeffs: coeffs},
 		store,
 	)
