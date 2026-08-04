@@ -38,10 +38,28 @@ func IDInt(id []byte) int {
 	return int(binary.BigEndian.Uint64(id[len(id)-8:]))
 }
 
+// IndexedBlockStore is implemented by BlockStores that can resolve a single
+// position's identifier without rebuilding IDs()'s full N-element slice —
+// e.g. because the identifier is directly computable from the position, or
+// already held one-per-position rather than needing re-derivation. BlockAt
+// uses this when available so that fetching a handful of positions (as an
+// audit challenge does) costs O(1) per position instead of O(N).
+type IndexedBlockStore interface {
+	BlockStore
+	// IDAt returns the identifier for position idx, equivalent to IDs()[idx]
+	// but without materializing the rest of IDs().
+	IDAt(idx int) []byte
+}
+
 // BlockAt returns the bytes of the block at position idx in store.IDs().
 // This encodes the canonical contract between IDs() and Block(): to fetch
-// block i, look up its identifier via IDs()[i] and pass it to Block.
+// block i, look up its identifier via IDs()[i] and pass it to Block. If store
+// implements IndexedBlockStore, IDAt is used instead of IDs()[idx] to avoid
+// rebuilding the whole identifier slice just to read one entry.
 func BlockAt(store BlockStore, idx int) ([]byte, error) {
+	if ib, ok := store.(IndexedBlockStore); ok {
+		return store.Block(ib.IDAt(idx))
+	}
 	return store.Block(store.IDs()[idx])
 }
 
@@ -112,6 +130,8 @@ func (s *FileStore) IDs() [][]byte {
 	return ids
 }
 
+func (s *FileStore) IDAt(idx int) []byte { return IntID(idx) }
+
 func (s *FileStore) Block(id []byte) ([]byte, error) {
 	i := IDInt(id)
 	if i < 0 || i >= s.n {
@@ -168,6 +188,8 @@ func (s *MemStore) IDs() [][]byte {
 	}
 	return ids
 }
+
+func (s *MemStore) IDAt(idx int) []byte { return IntID(idx) }
 
 func (s *MemStore) Block(id []byte) ([]byte, error) {
 	i := IDInt(id)
