@@ -92,11 +92,31 @@
 // (the paper specifies IND-CPA symmetric encryption; GCM also provides
 // authentication, which strengthens the verification check).
 //
-// File MAC scope: §4.2.1 encode step 4 says MAC_{k^file_MAC}(F) — a MAC over
+// File MAC scope: §4.2.1 encode step 4 says MAC_{k^file_MAC}(F), a MAC over
 // the original file blocks only. This implementation computes the MAC over the
 // full encoded representation (SA-ECC output F̃ and all sentinels), which binds
 // the parity structure and sentinels in addition to the file content. Extract
 // verifies by re-encoding the recovered file and recomputing the same MAC.
+//
+// Inner code decoding: §4.2.1 extract step c2 says to "apply the decoding
+// procedure of ECCin" to a challenge group's w collected responses, implying
+// a genuine bounded-error decode (ECCin has minimum distance d_1=W-V+1 per
+// §4.2.2, precisely so it can tolerate the server answering some queries
+// wrongly within one group). solveInnerCode instead solves a system built
+// from exactly V of the W responses, which recovers correctly only when
+// none of those V responses are wrong; see solveInnerCode's own doc comment
+// for the precise consequence. Cross-group majority voting (§4.2.1 extract
+// step d) still recovers the true value for a block that gets grouped with
+// a wrong response only occasionally, since the deterministic error is
+// confined to that one group's own recovered values, but a fully
+// paper-faithful ECCin decode is not implemented.
+//
+// erasure.go: an addition, not part of the paper. §4.2.1's own encode
+// algorithm bakes the outer erasure code in as a required step, so a caller
+// who wants to supply a different one instead of this package's own SA-ECC
+// still needs some source of redundancy present in what's stored -- see
+// erasure.go's package doc for the ready-made building blocks this provides
+// for that case.
 package bjo
 
 import (
@@ -186,7 +206,8 @@ func gfPow(a byte, n int) byte {
 // ---------------------------------------------------------------------------
 
 // rsEncodeSlice encodes a k-symbol message into an n-symbol systematic RS codeword
-// over GF(2^8).
+// over GF(2^8) -- the concrete choice of ECCout, §4.2's "standard (n,k,d)
+// Reed-Solomon code" applied to each stripe.
 //
 // The first k output symbols equal the message (systematic property).
 // Parity symbols are computed via Lagrange interpolation: find the unique
@@ -274,7 +295,7 @@ func rsDecodeBlocks(blocks [][]byte, k int) ([][]byte, error) {
 		return nil, fmt.Errorf("por: RS decode: need %d non-erased blocks, have %d", k, len(goodPos))
 	}
 
-	// Fast path: systematic code — message is already in positions 0..k-1.
+	// Fast path: systematic code, so the message is already in positions 0..k-1.
 	allSys := true
 	for i := range k {
 		if goodPos[i] != i {
@@ -375,31 +396,68 @@ func blockIndices(s *suite.Suite, kjc []byte, v, t int) []int {
 // Inner code generator matrix
 // ---------------------------------------------------------------------------
 
-// innerCodeElement computes G[row][u] = PRF(gseed, u, row) mod P.
+// innerCodeElement computes G[row][u] = PRF(gseed, u, row) mod P, the
+// (row,u) entry of §4.2.1's inner code generator matrix G = {g_ij}.
 //
-// The two-argument PRF call folds u and row into the HMAC input as consecutive
-// big-endian uint64 values: HMAC(gseed, encode(u) ‖ encode(row)). This gives
-// independent outputs for every (u, row) pair with a single HMAC call, replacing
-// the previous two-step derivation (PRF(PRF(gseed, u), row)).
+// The two-argument PRF call folds u and row into the HMAC input as
+// consecutive big-endian uint64 values: HMAC(gseed, encode(u) ‖ encode(row)).
+// This gives independent outputs for every (u, row) pair with a single HMAC
+// call.
 //
 // gseed is a public parameter; row and u are 1-indexed as in §4.2.1.
 func innerCodeElement(s *suite.Suite, gseed []byte, row, u int, P *big.Int) *big.Int {
 	return new(big.Int).Mod(s.PRF(gseed, u, row), P)
 }
 
-// computeInnerResponse computes M = Σ_{s=1}^v F_{i_s} · G[s][u] mod P.
-// F_{i_s} = SetBytes(blocks[indices[s-1]]) mod P treats each block as a
-// big-endian integer in Z_P, matching the paper's §4.2.1 formula directly.
-// Correctness of extraction requires P > max(block value).
-func computeInnerResponse(s *suite.Suite, blocks [][]byte, indices []int, gseed []byte, u int, P *big.Int) *big.Int {
+// innerResponse computes M = Σ_{s=1}^v F_{i_s} · G[s][u] mod P (§4.2.1's
+// inner code response), fetching each challenged block via fetch. Used by
+// both Encode (fetching from an already-encoded dense slice) and
+// RespondFetch/RespondExtract (fetching on demand from a blocks.BlockStore),
+// so the formula is implemented exactly once.
+//
+// fetch must return an error for any block it cannot supply, including a
+// genuinely missing one: this package represents a missing block as a nil
+// byte slice with no error elsewhere (see saeccDecode's doc comment), and
+// big.Int.SetBytes(nil) silently evaluates to 0 -- treating a missing block
+// as though its true value were the zero block would corrupt this
+// computation with no signal that anything went wrong. Concretely, this
+// matters for Phase I extraction (RespondExtract, called by extractPhaseI):
+// solving the resulting linear system with one substituted-zero input
+// recovers every other block's value correctly (the error is confined
+// exactly to the missing block's own position, by the linear-algebra
+// identity A⁻¹·A[:,col] = e_col) but reports a confident, unanimous,
+// completely wrong "0" for the missing block itself, indistinguishable from
+// a genuinely well-attested recovery. innerResponse's nil check turns this
+// into an error instead, so extractPhaseI's existing per-group error
+// handling discards the contaminated group and the block correctly falls
+// through to an erasure.
+func innerResponse(s *suite.Suite, fetch func(idx int) ([]byte, error), indices []int, gseed []byte, u int, P *big.Int) (*big.Int, error) {
 	M := big.NewInt(0)
 	for pos, idx := range indices {
-		Fi := new(big.Int).Mod(new(big.Int).SetBytes(blocks[idx]), P)
+		data, err := fetch(idx)
+		if err != nil {
+			return nil, fmt.Errorf("block %d: %w", idx, err)
+		}
+		if data == nil {
+			return nil, fmt.Errorf("block %d is missing", idx)
+		}
+		Fi := new(big.Int).Mod(new(big.Int).SetBytes(data), P)
 		Gsu := innerCodeElement(s, gseed, pos+1, u, P) // pos+1: 0-based slice → 1-based paper index
 		M.Add(M, new(big.Int).Mul(Fi, Gsu))
 		M.Mod(M, P)
 	}
-	return M
+	return M, nil
+}
+
+// denseFetch adapts an already-in-memory dense block slice to innerResponse's
+// fetch signature.
+func denseFetch(blocks [][]byte) func(idx int) ([]byte, error) {
+	return func(idx int) ([]byte, error) {
+		if idx < 0 || idx >= len(blocks) {
+			return nil, fmt.Errorf("index %d out of range [0, %d)", idx, len(blocks))
+		}
+		return blocks[idx], nil
+	}
 }
 
 // mToBytes encodes a Z_P element as a fixed-length big-endian byte slice whose
@@ -481,17 +539,23 @@ func parityEncrypt(keccenc []byte, blockIdx int, plaintext []byte) ([]byte, erro
 // SA-ECC outer code
 // ---------------------------------------------------------------------------
 
-// saeccEncode applies the Systematic Adversarial ECC (SA-ECC, §4.2) to m blocks
-// and returns the original blocks followed by (t-m) permuted encrypted parity
-// blocks, where t = m + numStripes*(OuterN-OuterK) and numStripes = ⌈m/OuterK⌉.
+// saeccEncode is §4.2's SA-ECC.Encode: "takes as input secret keys k1, k2,
+// k3, and a message M of size m blocks... permute M using PRP[m] with key
+// k1, divide the permuted message into stripes of k blocks each, compute
+// error-correcting information for each stripe using ECCout... the output
+// codeword is M followed by permuted and encrypted error-correcting
+// information (the permutation... using key k2 and their encryption with
+// key k3)." Applied to m blocks, it returns the original blocks followed by
+// (t-m) permuted encrypted parity blocks, where t = m +
+// numStripes*(OuterN-OuterK) and numStripes = ⌈m/OuterK⌉.
 //
 // The output is systematic: result[0:m] equals blocks (the original file is
 // unchanged), so an honest server can serve F without decryption.
 //
-// Security depends on three secrets:
-//   - kPerm: hides which original blocks belong to which stripe (PRP via pdp)
-//   - kECCPerm: hides which permuted-parity position each parity block occupies (PRP via pdp)
-//   - kECCEnc: encrypts each parity block (AES-256-CTR)
+// The paper's three keys map directly onto this function's parameters:
+//   - kPerm (k1): hides which original blocks belong to which stripe (PRP via pdp)
+//   - kECCPerm (k2): hides which permuted-parity position each parity block occupies (PRP via pdp)
+//   - kECCEnc (k3): encrypts each parity block (AES-256-CTR)
 func saeccEncode(s *suite.Suite, blocks [][]byte, outerN, outerK int, kPerm, kECCPerm, kECCEnc []byte) ([][]byte, error) {
 	m := len(blocks)
 	if m == 0 {
@@ -909,7 +973,10 @@ func Encode(s *suite.Suite, mk *MasterKey, store blocks.BlockStore) (*EncodedFil
 		u := deriveU(mk.KInd, j, p.W)
 		indices := blockIndices(s, kjc, p.V, t)
 
-		M := computeInnerResponse(s, encoded, indices, p.GSeed, u, p.P)
+		M, err := innerResponse(s, denseFetch(encoded), indices, p.GSeed, u, p.P)
+		if err != nil {
+			return nil, fmt.Errorf("por.Encode: sentinel %d: %w", j, err)
+		}
 		Q, err := sentinelEncrypt(encryptionKey(mk.KEnc, j), mToBytes(M, p.P))
 		if err != nil {
 			return nil, fmt.Errorf("por.Encode: sentinel %d: %w", j, err)
@@ -959,7 +1026,7 @@ func MakeChallenge(mk *MasterKey, j int) (*Challenge, error) {
 // containing M_j (fixed-length big-endian) and the sentinel sentinels[j-1].
 //
 // store.Len() is used to size the PRP; store.Block is called only for the v
-// challenged indices — not all blocks.
+// challenged indices, not the whole store.
 //
 // §4.2.1 respond: "the server derives i_1,...,i_v from k_j^c, computes M_j,
 // and returns M_j and Q_j".
@@ -973,21 +1040,14 @@ func RespondFetch(s *suite.Suite, p *Params, sentinels [][]byte, chal *Challenge
 
 	indices := blockIndices(s, chal.Kjc, p.V, store.Len())
 
-	P := p.P
-	M := big.NewInt(0)
-	for pos, idx := range indices {
-		data, err := store.Block(blocks.IntID(idx))
-		if err != nil {
-			return nil, fmt.Errorf("por.RespondFetch: block %d: %w", idx, err)
-		}
-		Fi := new(big.Int).Mod(new(big.Int).SetBytes(data), P)
-		Gsu := innerCodeElement(s, p.GSeed, pos+1, chal.U, P)
-		M.Add(M, new(big.Int).Mul(Fi, Gsu))
-		M.Mod(M, P)
+	fetch := func(idx int) ([]byte, error) { return store.Block(blocks.IntID(idx)) }
+	M, err := innerResponse(s, fetch, indices, p.GSeed, chal.U, p.P)
+	if err != nil {
+		return nil, fmt.Errorf("por.RespondFetch: %w", err)
 	}
 
 	return &Response{
-		Mj: mToBytes(M, P),
+		Mj: mToBytes(M, p.P),
 		Qj: sentinels[chal.J-1],
 	}, nil
 }
@@ -1040,15 +1100,32 @@ func RespondExtract(s *suite.Suite, ef *EncodedFile, seed []byte, u int) ([]byte
 		return nil, fmt.Errorf("por.RespondExtract: u=%d out of range [1, %d]", u, p.W)
 	}
 	indices := blockIndices(s, seed, p.V, len(ef.Blocks))
-	M := computeInnerResponse(s, ef.Blocks, indices, p.GSeed, u, p.P)
+	M, err := innerResponse(s, denseFetch(ef.Blocks), indices, p.GSeed, u, p.P)
+	if err != nil {
+		return nil, fmt.Errorf("por.RespondExtract: %w", err)
+	}
 	return mToBytes(M, p.P), nil
 }
 
-// solveInnerCode recovers the v block field elements from w inner-code responses
-// by Gaussian elimination over Z_P (§4.2.1 extract step c2).
+// solveInnerCode recovers the v block field elements from w inner-code
+// responses by Gaussian elimination over Z_P.
 //
-// responses[u-1] = M[u] = Σ_{s=1}^v F_{i_s} · G[s][u] mod P for u = 1…w.
-// Uses the first v equations; for an honest server any v equations suffice.
+// §4.2.1 extract step c2 says to "apply the decoding procedure of ECCin"
+// over the full w responses -- ECCin has minimum distance d_1=W-V+1
+// (§4.2.2) specifically so a genuine decode can tolerate the server
+// answering some of the w queries wrongly within one group, not just
+// missing ones. solveInnerCode instead solves the square v×v system built
+// from exactly the first v of the w responses (responses[u-1] = M[u] =
+// Σ_{s=1}^v F_{i_s}·G[s][u] mod P for u = 1…v), which is a correct recovery
+// only when none of those v responses are wrong; it does not implement
+// ECCin's own bounded-error decoding. See the package doc's "Deviations
+// from the paper" for why this is an acceptable tradeoff in the current
+// design: a group containing one wrong response still only corrupts that
+// group's own recovered values (by the linear-algebra identity
+// A⁻¹·A[:,col]=e_col), so cross-group majority voting (§4.2.1 extract step
+// d) still recovers a block correctly as long as it isn't grouped with a
+// wrong response in more than half its appearances.
+//
 // Returns an error if the v×v sub-system is singular (negligible probability
 // for a random generator matrix G).
 func solveInnerCode(s *suite.Suite, gseed []byte, responses []*big.Int, v int, P *big.Int) ([]*big.Int, error) {
@@ -1229,7 +1306,7 @@ func extractPhaseI(s *suite.Suite, mk *MasterKey, ef *EncodedFile) [][]byte {
 func Extract(s *suite.Suite, mk *MasterKey, ef *EncodedFile) ([][]byte, error) {
 	p := mk.Params
 
-	// §4.2.1 step 1: Phase I — inner code extraction.
+	// §4.2.1 step 1: Phase I, inner code extraction.
 	var phaseIIBlocks [][]byte
 	if p.Alpha > 0 {
 		phaseIIBlocks = extractPhaseI(s, mk, ef)
@@ -1237,7 +1314,7 @@ func Extract(s *suite.Suite, mk *MasterKey, ef *EncodedFile) ([][]byte, error) {
 		phaseIIBlocks = ef.Blocks
 	}
 
-	// §4.2.1 step 2: Phase II — outer SA-ECC decode.
+	// §4.2.1 step 2: Phase II, outer SA-ECC decode.
 	file, err := saeccDecode(s, phaseIIBlocks, ef.NumMessage, p.OuterN, p.OuterK,
 		mk.KPerm, mk.KECCPerm, mk.KECCEnc)
 	if err != nil {

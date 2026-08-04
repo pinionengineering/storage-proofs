@@ -457,7 +457,7 @@ func TestRespondExtractRangeCheck(t *testing.T) {
 // field elements used to build the responses.
 //
 // Constructs v random field elements F[0..v-1] ∈ Z_P, computes W responses
-// M[u] = Σ_{s=1}^v F[s] · G[s][u] mod P by calling computeInnerResponse with
+// M[u] = Σ_{s=1}^v F[s] · G[s][u] mod P by calling innerResponse with
 // synthetic single-element blocks, then checks that solveInnerCode returns F.
 func TestSolveInnerCodeRoundTrip(t *testing.T) {
 	P := big.NewInt(2147483647)
@@ -485,7 +485,11 @@ func TestSolveInnerCodeRoundTrip(t *testing.T) {
 
 	responses := make([]*big.Int, w)
 	for u := 1; u <= w; u++ {
-		responses[u-1] = computeInnerResponse(suite.SuiteV1, blocks, indices, gseed, u, P)
+		resp, err := innerResponse(suite.SuiteV1, denseFetch(blocks), indices, gseed, u, P)
+		if err != nil {
+			t.Fatalf("innerResponse: %v", err)
+		}
+		responses[u-1] = resp
 	}
 
 	recovered, err := solveInnerCode(suite.SuiteV1, gseed, responses, v, P)
@@ -560,6 +564,45 @@ func TestExtractPhaseIShortFile(t *testing.T) {
 		t.Fatalf("Extract (Phase I+II, short file): %v", err)
 	}
 	if !blockEqual(recovered, original) {
-		t.Fatal("Extract (Phase I+II): recovered file does not match original (short last stripe)")
+		t.Fatal("Extract: recovered file does not match original (short last stripe)")
 	}
+}
+
+// DIAGNOSTIC: does extractPhaseI correctly report a genuinely-missing block
+// as an erasure (nil), or does it silently recover a wrong value?
+// innerResponse does new(big.Int).SetBytes(data) on whatever
+// store.Block returns; if a missing block comes back as (nil, nil) rather
+// than an error, SetBytes(nil) == 0, silently substituting a false block
+// value of zero into the inner-code linear system.
+func TestDiagnostic_ExtractPhaseI_MissingBlock(t *testing.T) {
+	params := phaseIParams()
+	mk, err := KeyGen(params)
+	if err != nil {
+		t.Fatalf("KeyGen: %v", err)
+	}
+	original := randomBlocks(t, 12, 3)
+	ef, err := Encode(suite.SuiteV1, mk, blockstore.NewMemStore(original))
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	// Simulate the server having genuinely lost message block 0 -- exactly
+	// how saeccDecode's own doc comment says erasures are represented
+	// ("entries in encodedBlocks that are nil are treated as erasures").
+	lossy := make([][]byte, len(ef.Blocks))
+	copy(lossy, ef.Blocks)
+	lossy[0] = nil
+	lossyEF := &EncodedFile{Blocks: lossy, NumMessage: ef.NumMessage, Sentinels: ef.Sentinels, FileMAC: ef.FileMAC, Params: ef.Params}
+
+	recovered := extractPhaseI(suite.SuiteV1, mk, lossyEF)
+
+	t.Logf("recovered[0] = %v (nil means correctly flagged as erasure)", recovered[0])
+	if recovered[0] == nil {
+		t.Log("PASS: missing block correctly reported as an erasure")
+		return
+	}
+	if bytes.Equal(recovered[0], make([]byte, len(original[0]))) {
+		t.Fatalf("BUG CONFIRMED: missing block silently recovered as all-zero bytes %x instead of being flagged as an erasure (true value was %x)", recovered[0], original[0])
+	}
+	t.Fatalf("missing block recovered as %x, neither nil nor all-zero -- true value was %x", recovered[0], original[0])
 }

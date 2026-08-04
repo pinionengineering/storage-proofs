@@ -41,7 +41,7 @@ func randomBlocks(t *testing.T, n, size int) [][]byte {
 }
 
 // blockFieldElem returns SetBytes(block) mod P, the Z_P element that the protocol
-// uses to represent block content (matching computeInnerResponse).
+// uses to represent block content (matching innerResponse).
 // Requires P > max(block value), i.e. P > 2^(8·len(block)).
 func blockFieldElem(block []byte, P *big.Int) *big.Int {
 	return new(big.Int).Mod(new(big.Int).SetBytes(block), P)
@@ -117,7 +117,7 @@ func TestGF256GeneratorOrder(t *testing.T) {
 		}
 	}
 	if gfPow(g, 255) != 1 {
-		t.Fatal("gfPow(3, 255) != 1: 3 does not have order 255 — table is broken")
+		t.Fatal("gfPow(3, 255) != 1: 3 does not have order 255, table is broken")
 	}
 }
 
@@ -347,7 +347,7 @@ func TestInnerCodeLinearity(t *testing.T) {
 }
 
 // TestInnerCodeConsistency verifies that the same inputs always produce the
-// same inner code response: computeInnerResponse is deterministic.
+// same inner code response: innerResponse is deterministic.
 func TestInnerCodeConsistency(t *testing.T) {
 	P := smallP
 	gseed := randomBlock(t, 32)
@@ -355,10 +355,16 @@ func TestInnerCodeConsistency(t *testing.T) {
 	indices := []int{0, 3, 7, 11, 19}
 	u := 2
 
-	m1 := computeInnerResponse(suite.SuiteV1, blocks, indices, gseed, u, P)
-	m2 := computeInnerResponse(suite.SuiteV1, blocks, indices, gseed, u, P)
+	m1, err := innerResponse(suite.SuiteV1, denseFetch(blocks), indices, gseed, u, P)
+	if err != nil {
+		t.Fatalf("innerResponse: %v", err)
+	}
+	m2, err := innerResponse(suite.SuiteV1, denseFetch(blocks), indices, gseed, u, P)
+	if err != nil {
+		t.Fatalf("innerResponse: %v", err)
+	}
 	if m1.Cmp(m2) != 0 {
-		t.Fatal("computeInnerResponse is not deterministic")
+		t.Fatal("innerResponse is not deterministic")
 	}
 }
 
@@ -371,8 +377,14 @@ func TestInnerCodeDifferentColumns(t *testing.T) {
 	blocks := randomBlocks(t, 10, 32)
 	indices := []int{0, 2, 4, 6, 8}
 
-	m1 := computeInnerResponse(suite.SuiteV1, blocks, indices, gseed, 1, P)
-	m2 := computeInnerResponse(suite.SuiteV1, blocks, indices, gseed, 2, P)
+	m1, err := innerResponse(suite.SuiteV1, denseFetch(blocks), indices, gseed, 1, P)
+	if err != nil {
+		t.Fatalf("innerResponse: %v", err)
+	}
+	m2, err := innerResponse(suite.SuiteV1, denseFetch(blocks), indices, gseed, 2, P)
+	if err != nil {
+		t.Fatalf("innerResponse: %v", err)
+	}
 	if m1.Cmp(m2) == 0 {
 		t.Fatal("different u columns produced the same response (negligible probability)")
 	}
@@ -400,7 +412,7 @@ func TestInnerCodeElementDerivedFromPDPPRF(t *testing.T) {
 // TestVerificationEquation is the core soundness check for the POR protocol.
 //
 // For an honest server, the precomputed M_j in Encode and the computed M_j in
-// Respond must be identical because both call computeInnerResponse with the
+// Respond must be identical because both call innerResponse with the
 // same inputs. The sentinel Q_j = Enc(k_j^e, M_j) must therefore decrypt to
 // the server's M_j.
 //
@@ -418,7 +430,10 @@ func TestVerificationEquation(t *testing.T) {
 	u := 5
 
 	// Client-side (Encode): compute and encrypt M.
-	M := computeInnerResponse(suite.SuiteV1, blocks, indices, gseed, u, P)
+	M, err := innerResponse(suite.SuiteV1, denseFetch(blocks), indices, gseed, u, P)
+	if err != nil {
+		t.Fatalf("innerResponse: %v", err)
+	}
 	Mbytes := mToBytes(M, P)
 	Q, err := sentinelEncrypt(kje, Mbytes)
 	if err != nil {
@@ -426,7 +441,10 @@ func TestVerificationEquation(t *testing.T) {
 	}
 
 	// Server-side (Respond): compute M independently.
-	Mserver := computeInnerResponse(suite.SuiteV1, blocks, indices, gseed, u, P)
+	Mserver, err := innerResponse(suite.SuiteV1, denseFetch(blocks), indices, gseed, u, P)
+	if err != nil {
+		t.Fatalf("innerResponse: %v", err)
+	}
 
 	// Verify: client decrypts Q and compares.
 	decrypted, err := sentinelDecrypt(kje, Q)
@@ -435,7 +453,7 @@ func TestVerificationEquation(t *testing.T) {
 	}
 
 	if Mserver.Cmp(M) != 0 {
-		t.Fatal("server M != client M (computeInnerResponse is not deterministic)")
+		t.Fatal("server M != client M (innerResponse is not deterministic)")
 	}
 	if string(decrypted) != string(Mbytes) {
 		t.Fatal("Dec(k_j^e, Q_j) != M_j: verification equation fails for honest server")
@@ -459,7 +477,10 @@ func TestVerificationEquationTamperedBlock(t *testing.T) {
 	u := 3
 
 	// Pre-compute with original blocks.
-	M := computeInnerResponse(suite.SuiteV1, blocks, indices, gseed, u, P)
+	M, err := innerResponse(suite.SuiteV1, denseFetch(blocks), indices, gseed, u, P)
+	if err != nil {
+		t.Fatalf("innerResponse: %v", err)
+	}
 	Q, err := sentinelEncrypt(kje, mToBytes(M, P))
 	if err != nil {
 		t.Fatalf("sentinelEncrypt: %v", err)
@@ -469,7 +490,10 @@ func TestVerificationEquationTamperedBlock(t *testing.T) {
 	blocks[0] = randomBlock(t, 32)
 
 	// Server computes M with corrupted block.
-	Mcorrupted := computeInnerResponse(suite.SuiteV1, blocks, indices, gseed, u, P)
+	Mcorrupted, err := innerResponse(suite.SuiteV1, denseFetch(blocks), indices, gseed, u, P)
+	if err != nil {
+		t.Fatalf("innerResponse: %v", err)
+	}
 
 	decrypted, err := sentinelDecrypt(kje, Q)
 	if err != nil {
@@ -478,7 +502,7 @@ func TestVerificationEquationTamperedBlock(t *testing.T) {
 
 	// The server's response should not match the stored sentinel.
 	if string(decrypted) == string(mToBytes(Mcorrupted, P)) {
-		t.Fatal("tampered block produced the same response as the original — soundness failure")
+		t.Fatal("tampered block produced the same response as the original, soundness failure")
 	}
 }
 
@@ -709,6 +733,6 @@ func TestTamperedBlockFails(t *testing.T) {
 		}
 	}
 	if !anyFailed {
-		t.Fatal("all challenges passed despite all blocks being corrupted — soundness failure")
+		t.Fatal("all challenges passed despite all blocks being corrupted, soundness failure")
 	}
 }

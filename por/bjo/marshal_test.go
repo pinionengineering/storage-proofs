@@ -11,7 +11,7 @@ import (
 
 // TestMasterKeyMarshalRoundTrip verifies that json.Marshal / json.Unmarshal
 // preserves all seven derived sub-keys and the Params (including P and GSeed).
-// Reference: §4.2.1 Bowers, Juels, Oprea — KeyGen derives KChal, KInd,
+// Reference: §4.2.1 Bowers, Juels, Oprea. KeyGen derives KChal, KInd,
 // KMACFile, KEnc, KPerm, KECCPerm, KECCEnc from a master secret.
 func TestMasterKeyMarshalRoundTrip(t *testing.T) {
 	params := &Params{

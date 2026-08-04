@@ -118,6 +118,6 @@ func TestPORTamperedBlockDetected(t *testing.T) {
 		}
 	}
 	if !anyFailed {
-		t.Fatal("all Q challenges passed despite all blocks being corrupted — soundness failure")
+		t.Fatal("all Q challenges passed despite all blocks being corrupted, soundness failure")
 	}
 }
