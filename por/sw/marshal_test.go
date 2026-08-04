@@ -81,7 +81,7 @@ func TestSWSecretKeyMarshalUsable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MakeChallenge: %v", err)
 	}
-	proof, err := Respond(params, store, tags, chal)
+	proof, err := Respond(params, store, tagsMap(tags), chal)
 	if err != nil {
 		t.Fatalf("Respond: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestPubSchemeMarshalUsable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MakeChallenge: %v", err)
 	}
-	proof, err := ps2.RespondFetch(tags, chal, store)
+	proof, err := ps2.RespondFetch(rawTagsMap(tags), chal, store)
 	if err != nil {
 		t.Fatalf("RespondFetch: %v", err)
 	}

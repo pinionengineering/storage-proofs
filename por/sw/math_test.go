@@ -31,7 +31,7 @@ func randZP(t *testing.T, P *big.Int) *big.Int {
 
 // TestTagEquation verifies the tag definition directly:
 //
-//	σ_i = PRF_K(i) mod P + Σ_{j=1}^S f_{i,j}·α_j  mod P
+//	σ_i = PRF_K(id_i) mod P + Σ_{j=1}^S f_{i,j}·α_j  mod P
 //
 // TagBlocks must produce exactly this value for each block.
 func TestTagEquation(t *testing.T) {
@@ -92,7 +92,7 @@ func TestTagPRFDistinct(t *testing.T) {
 	v0 := suite.SuiteV1.PRFBytes(k, blocks.IntID(0))
 	v1 := suite.SuiteV1.PRFBytes(k, blocks.IntID(1))
 	if v0.Cmp(v1) == 0 {
-		t.Fatal("PRFBytes(K, IntID(0)) == PRFBytes(K, IntID(1)) — collision (negligible probability)")
+		t.Fatal("PRFBytes(K, IntID(0)) == PRFBytes(K, IntID(1)), a collision of negligible probability")
 	}
 }
 
@@ -154,7 +154,7 @@ func TestSectorElemModP(t *testing.T) {
 
 // TestVerificationEquation verifies the core algebraic identity at the field level:
 //
-//	σ == Σ_t ν_t·PRF_K(i_t) + Σ_j μ_j·α_j  mod P
+//	σ == Σ_t ν_t·PRF_K(id_{i_t}) + Σ_j μ_j·α_j  mod P
 //
 // This is checked by constructing an honest proof manually and verifying that
 // Verify accepts it, and then checking that the expanded equation holds.
@@ -183,7 +183,7 @@ func TestVerificationEquation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	proof, err := Respond(params, blocks.NewMemStore(file), tags, chal)
+	proof, err := Respond(params, blocks.NewMemStore(file), tagsMap(tags), chal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestVerificationEquationTamperedMu(t *testing.T) {
 	tags, _ := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
 	chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params, 4)
-	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
+	proof, _ := Respond(params, blocks.NewMemStore(file), tagsMap(tags), chal)
 
 	// Flip one μ value.
 	proof.Mu[0].Add(proof.Mu[0], big.NewInt(1))
@@ -268,7 +268,7 @@ func TestVerificationEquationTamperedSigma(t *testing.T) {
 	tags, _ := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
 	chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params, 4)
-	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
+	proof, _ := Respond(params, blocks.NewMemStore(file), tagsMap(tags), chal)
 
 	proof.Sigma.Add(proof.Sigma, big.NewInt(1))
 	proof.Sigma.Mod(proof.Sigma, P)
@@ -395,7 +395,7 @@ func TestProofSigmaLinearity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	proof, err := Respond(params, blocks.NewMemStore(file), tags, chal)
+	proof, err := Respond(params, blocks.NewMemStore(file), tagsMap(tags), chal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +428,7 @@ func TestProofMuLinearity(t *testing.T) {
 	tags, _ := TagBlocks(suite.SuiteV1, sk, blocks.NewMemStore(file))
 
 	chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params, 1)
-	proof, _ := Respond(params, blocks.NewMemStore(file), tags, chal)
+	proof, _ := Respond(params, blocks.NewMemStore(file), tagsMap(tags), chal)
 
 	idx := chal.Indices[0]
 	nu := chal.Coeffs[0]

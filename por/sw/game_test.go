@@ -66,7 +66,7 @@ func TestSWChallengeGame(t *testing.T) {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
 
-		proof, err := Respond(params, blocks.NewMemStore(file), tags, chal)
+		proof, err := Respond(params, blocks.NewMemStore(file), tagsMap(tags), chal)
 		if err != nil {
 			t.Fatalf("Respond(round=%d): %v", round, err)
 		}
@@ -106,7 +106,7 @@ func TestSWTamperedBlockFails(t *testing.T) {
 			corruptBlocks[i] = g
 		}
 		chal, _ := MakeChallenge(blocks.NewMemStore(file).IDs(), params, testChalSize)
-		proof, err := RespondFetch(params, tags, chal, blocks.NewMemStore(corruptBlocks))
+		proof, err := RespondFetch(params, tagsMap(tags), chal, blocks.NewMemStore(corruptBlocks))
 		if err != nil {
 			t.Fatalf("RespondFetch: %v", err)
 		}
@@ -145,7 +145,7 @@ func TestSWUnlimitedChallenges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
-		proof, err := Respond(params, blocks.NewMemStore(file), tags, chal)
+		proof, err := Respond(params, blocks.NewMemStore(file), tagsMap(tags), chal)
 		if err != nil {
 			t.Fatalf("Respond(round=%d): %v", round, err)
 		}
@@ -180,12 +180,12 @@ func TestSWRespondFetchEquivalent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p1, err := Respond(params, blocks.NewMemStore(file), tags, chal)
+	p1, err := Respond(params, blocks.NewMemStore(file), tagsMap(tags), chal)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	p2, err := RespondFetch(params, tags, chal, blocks.NewMemStore(file))
+	p2, err := RespondFetch(params, tagsMap(tags), chal, blocks.NewMemStore(file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestSWSmallFile(t *testing.T) {
 		t.Fatalf("expected 3 indices (clamped to n), got %d", len(chal.Indices))
 	}
 
-	proof, err := Respond(params, blocks.NewMemStore(file), tags, chal)
+	proof, err := Respond(params, blocks.NewMemStore(file), tagsMap(tags), chal)
 	if err != nil {
 		t.Fatal(err)
 	}

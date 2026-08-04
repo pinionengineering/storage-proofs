@@ -53,12 +53,16 @@ type Scheme interface {
 	MakeChallenge(ids [][]byte, l int) (*SWChallenge, error)
 
 	// RespondFetch computes a proof by fetching the challenged blocks on demand.
-	// Called by the server; requires only the serialized tags and a block store.
-	RespondFetch(tags [][]byte, chal *SWChallenge, store blocks.BlockStore) (*SWProof, error)
+	// Called by the server; requires only the serialized tags for the
+	// challenged indices (keyed by index, not a dense 0..N-1 slice) and a
+	// block store.
+	RespondFetch(tags map[int][]byte, chal *SWChallenge, store blocks.BlockStore) (*SWProof, error)
 
 	// Verify checks the server's proof against a challenge. ids is the ordered
-	// identifier list from store.IDs() at audit time; it is used by PubKind to
-	// reconstruct H(λ‖id_t) per §3.3 and ignored by PrivKind (§3.2 uses only
-	// integer positions for the PRF).
+	// identifier list from store.IDs() at audit time: PubKind uses it to
+	// reconstruct H(λ‖id_t) per §3.3, and PrivKind uses it to recompute
+	// PRF_K(id_t) per §3.1's own notation (generalized from a bare index to
+	// id; see por/sw's package doc "Block identifiers" section) -- both
+	// variants need it, neither ignores it.
 	Verify(chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error)
 }

@@ -50,9 +50,11 @@ func (ps *PrivScheme) MakeChallenge(ids [][]byte, l int) (*SWChallenge, error) {
 	return &SWChallenge{Kind: PrivKind, Indices: c.Indices, Coeffs: c.Coeffs}, nil
 }
 
-// RespondFetch deserializes the tags, computes the proof, and re-serializes sigma.
-func (ps *PrivScheme) RespondFetch(tags [][]byte, chal *SWChallenge, store blocks.BlockStore) (*SWProof, error) {
-	privTags := make([]*Tag, len(tags))
+// RespondFetch deserializes the tags, computes the proof, and re-serializes
+// sigma. tags is keyed by block index, so the caller only needs to supply
+// tags for the indices chal.Indices names.
+func (ps *PrivScheme) RespondFetch(tags map[int][]byte, chal *SWChallenge, store blocks.BlockStore) (*SWProof, error) {
+	privTags := make(map[int]*Tag, len(tags))
 	for i, b := range tags {
 		privTags[i] = &Tag{Sigma: new(big.Int).SetBytes(b)}
 	}

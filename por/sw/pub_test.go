@@ -44,7 +44,7 @@ func TestPubChallengeGame(t *testing.T) {
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
-		proof, err := ps.RespondFetch(tags, chal, store)
+		proof, err := ps.RespondFetch(rawTagsMap(tags), chal, store)
 		if err != nil {
 			t.Fatalf("RespondFetch(round=%d): %v", round, err)
 		}
@@ -70,7 +70,7 @@ func TestVerifyPub(t *testing.T) {
 	ids := store.IDs()
 	tags, _ := ps.TagBlocks(store)
 	chal, _ := ps.MakeChallenge(ids, testChalSize)
-	proof, _ := ps.RespondFetch(tags, chal, store)
+	proof, _ := ps.RespondFetch(rawTagsMap(tags), chal, store)
 
 	pk := ps.PubKey()
 	ok, err := VerifyPub(pk, chal, proof, ids)
@@ -92,7 +92,7 @@ func TestVerifyPubTamperedMu(t *testing.T) {
 	ids := store.IDs()
 	tags, _ := ps.TagBlocks(store)
 	chal, _ := ps.MakeChallenge(ids, testChalSize)
-	proof, _ := ps.RespondFetch(tags, chal, store)
+	proof, _ := ps.RespondFetch(rawTagsMap(tags), chal, store)
 
 	proof.Mu[0].Add(proof.Mu[0], big.NewInt(1))
 	proof.Mu[0].Mod(proof.Mu[0], bn254Order)
@@ -116,7 +116,7 @@ func TestVerifyPubTamperedSigma(t *testing.T) {
 	ids := store.IDs()
 	tags, _ := ps.TagBlocks(store)
 	chal, _ := ps.MakeChallenge(ids, testChalSize)
-	proof, _ := ps.RespondFetch(tags, chal, store)
+	proof, _ := ps.RespondFetch(rawTagsMap(tags), chal, store)
 
 	// Flip a byte in sigma — the result is (almost certainly) an invalid G₁
 	// point, so Unmarshal will error. Verify must not accept it.
@@ -148,7 +148,7 @@ func TestPubTamperedBlockFails(t *testing.T) {
 			corruptBlocks[i] = g
 		}
 		chal, _ := ps.MakeChallenge(ids, testChalSize)
-		proof, err := ps.RespondFetch(tags, chal, blocks.NewMemStore(corruptBlocks))
+		proof, err := ps.RespondFetch(rawTagsMap(tags), chal, blocks.NewMemStore(corruptBlocks))
 		if err != nil {
 			t.Fatalf("RespondFetch: %v", err)
 		}
@@ -186,7 +186,7 @@ func runScheme(t *testing.T, scheme Scheme, nBlocks, blockSize, nRounds, l int) 
 		if err != nil {
 			t.Fatalf("MakeChallenge(round=%d): %v", round, err)
 		}
-		proof, err := scheme.RespondFetch(tags, chal, store)
+		proof, err := scheme.RespondFetch(rawTagsMap(tags), chal, store)
 		if err != nil {
 			t.Fatalf("RespondFetch(round=%d): %v", round, err)
 		}
@@ -254,7 +254,7 @@ func TestPubSmallFile(t *testing.T) {
 		t.Fatalf("expected 3 challenge indices (clamped to n), got %d", len(chal.Indices))
 	}
 
-	proof, err := ps.RespondFetch(tags, chal, store)
+	proof, err := ps.RespondFetch(rawTagsMap(tags), chal, store)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -309,7 +309,10 @@ func (ps *PubScheme) MakeChallenge(ids [][]byte, l int) (*SWChallenge, error) {
 //
 //	σ   = Σ_t ν_t · σ_{i_t}           ∈ G₁
 //	μ_j = Σ_t ν_t · f_{i_t,j} mod q   ∈ Z_q
-func (ps *PubScheme) RespondFetch(tags [][]byte, chal *SWChallenge, store blocks.BlockStore) (*SWProof, error) {
+//
+// tags is keyed by block index rather than a dense 0..N-1 slice, so a caller
+// only needs to supply tags for the indices chal.Indices actually names.
+func (ps *PubScheme) RespondFetch(tags map[int][]byte, chal *SWChallenge, store blocks.BlockStore) (*SWProof, error) {
 	if len(chal.Indices) == 0 {
 		return nil, fmt.Errorf("sw.PubScheme.RespondFetch: empty challenge")
 	}
@@ -321,13 +324,14 @@ func (ps *PubScheme) RespondFetch(tags [][]byte, chal *SWChallenge, store blocks
 
 	var sigmaAcc bn254.G1Affine // zero value = identity
 	for t, idx := range chal.Indices {
-		if idx < 0 || idx >= len(tags) {
-			return nil, fmt.Errorf("sw.PubScheme.RespondFetch: index %d out of range [0, %d)", idx, len(tags))
+		raw, ok := tags[idx]
+		if !ok {
+			return nil, fmt.Errorf("sw.PubScheme.RespondFetch: no tag supplied for index %d", idx)
 		}
 		nu := chal.Coeffs[t]
 
 		var tag bn254.G1Affine
-		if _, err := tag.SetBytes(tags[idx]); err != nil {
+		if _, err := tag.SetBytes(raw); err != nil {
 			return nil, fmt.Errorf("sw.PubScheme.RespondFetch: tag[%d]: %w", idx, err)
 		}
 		var term bn254.G1Affine
