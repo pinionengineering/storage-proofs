@@ -59,7 +59,7 @@ func trySparse(sch SchemeSpec, store blockspkg.BlockStore) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	chal, validator, err := challenger.Challenge(encoded.IDs())
+	chal, validator, err := challenger.Challenge(encoded.Len(), blockspkg.IDAtFunc(encoded))
 	if err != nil {
 		return false, err
 	}

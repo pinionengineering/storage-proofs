@@ -73,7 +73,7 @@ func TestVerifyPub(t *testing.T) {
 	proof, _ := ps.RespondFetch(rawTagsMap(tags), chal, store)
 
 	pk := ps.PubKey()
-	ok, err := VerifyPub(pk, chal, proof, ids)
+	ok, err := VerifyPub(pk, chal, proof, func(i int) []byte { return ids[i] })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestVerifyPubTamperedMu(t *testing.T) {
 	proof.Mu[0].Add(proof.Mu[0], big.NewInt(1))
 	proof.Mu[0].Mod(proof.Mu[0], bn254Order)
 
-	ok, err := VerifyPub(ps.PubKey(), chal, proof, ids)
+	ok, err := VerifyPub(ps.PubKey(), chal, proof, func(i int) []byte { return ids[i] })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestVerifyPubTamperedSigma(t *testing.T) {
 	// Flip a byte in sigma — the result is (almost certainly) an invalid G₁
 	// point, so Unmarshal will error. Verify must not accept it.
 	proof.Sigma[3] ^= 0xff
-	ok, err := VerifyPub(ps.PubKey(), chal, proof, ids)
+	ok, err := VerifyPub(ps.PubKey(), chal, proof, func(i int) []byte { return ids[i] })
 	// Either Unmarshal errors or the pairing check fails — both are acceptable.
 	if err == nil && ok {
 		t.Fatal("VerifyPub accepted a proof with tampered sigma")

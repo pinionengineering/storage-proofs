@@ -87,7 +87,7 @@ func run(sch schemeSpec, store blockspkg.BlockStore, p Params) (Metrics, error) 
 		return Metrics{}, err
 	}
 
-	chal, validator, err := challenger.Challenge(encoded.IDs())
+	chal, validator, err := challenger.Challenge(encoded.Len(), blockspkg.IDAtFunc(encoded))
 	if err != nil {
 		return Metrics{}, err
 	}

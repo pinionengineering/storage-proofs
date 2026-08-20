@@ -377,7 +377,7 @@ func benchGBProjection() (GBProjectionData, error) {
 		if err != nil {
 			return GBProjectionData{}, fmt.Errorf("%s gb newProver: %w", sch.Name, err)
 		}
-		chal, _, err := challenger.Challenge(encoded.IDs())
+		chal, _, err := challenger.Challenge(encoded.Len(), blockspkg.IDAtFunc(encoded))
 		if err != nil {
 			return GBProjectionData{}, fmt.Errorf("%s gb challenge: %w", sch.Name, err)
 		}
@@ -483,7 +483,8 @@ func sweepDetection() (LineChart, error) {
 						grid[i][j] = cellResult{err: err}
 						return
 					}
-					chal, validator, err := ch.Challenge(entry.encodedIDs)
+					ids := entry.encodedIDs
+				chal, validator, err := ch.Challenge(len(ids), func(i int) []byte { return ids[i] })
 					if err != nil {
 						grid[i][j] = cellResult{err: err}
 						return
@@ -607,7 +608,7 @@ func countExtractionWitnesses(sch schemeSpec, store blockspkg.BlockStore) (int, 
 
 	witnesses := 0
 	for range extractMaxRound {
-		chal, validator, err := challenger.Challenge(encoded.IDs())
+		chal, validator, err := challenger.Challenge(encoded.Len(), blockspkg.IDAtFunc(encoded))
 		if err != nil {
 			return 0, err
 		}

@@ -355,7 +355,7 @@ func (ps *PubScheme) RespondFetch(tags map[int][]byte, chal *SWChallenge, store 
 
 // Verify calls VerifyPub with the embedded public key.
 func (ps *PubScheme) Verify(chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error) {
-	return VerifyPub(ps.pk, chal, proof, ids)
+	return VerifyPub(ps.pk, chal, proof, func(i int) []byte { return ids[i] })
 }
 
 // verifyPubCore performs the pairing check:
@@ -364,7 +364,7 @@ func (ps *PubScheme) Verify(chal *SWChallenge, proof *SWProof, ids [][]byte) (bo
 //
 // where A = Σ_t ν_t·H(Name‖id_t) + Σ_j μ_j·u_j. Implemented as
 // PairingCheck([σ, -A], [G₂, v]) == true for efficiency (one multi-pairing).
-func verifyPubCore(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error) {
+func verifyPubCore(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, idAt func(int) []byte) (bool, error) {
 	if len(proof.Mu) != len(pk.U) {
 		return false, fmt.Errorf("sw.VerifyPub: proof has %d μ elements, want %d", len(proof.Mu), len(pk.U))
 	}
@@ -378,7 +378,7 @@ func verifyPubCore(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, ids [][]
 	var a bn254.G1Affine // zero = identity
 	for t, idx := range chal.Indices {
 		nu := chal.Coeffs[t]
-		h, err := blockHashG1(pk.Name, ids[idx])
+		h, err := blockHashG1(pk.Name, idAt(idx))
 		if err != nil {
 			return false, fmt.Errorf("sw.VerifyPub: hash block %d: %w", idx, err)
 		}
@@ -406,6 +406,12 @@ func verifyPubCore(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, ids [][]
 // the server without access to the secret scalar α.
 //
 // Checks: e(σ, G₂) == e(Σ_t ν_t·H(λ‖id_t) + Σ_j μ_j·u_j, v)
-func VerifyPub(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, ids [][]byte) (bool, error) {
-	return verifyPubCore(pk, chal, proof, ids)
+//
+// idAt resolves a block position to its identifier; only called for
+// positions in chal.Indices (the actually-challenged blocks), never for
+// every block in the file, so callers backed by a huge tagged file (or a
+// lazily-computable identifier, e.g. ipfsproof.SuperBlockID) never need to
+// materialize the full identifier list just to verify one proof.
+func VerifyPub(pk *PubPublicKey, chal *SWChallenge, proof *SWProof, idAt func(int) []byte) (bool, error) {
+	return verifyPubCore(pk, chal, proof, idAt)
 }

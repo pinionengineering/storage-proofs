@@ -233,7 +233,7 @@ func (ch *Challenger) ChalBytes(chal line.Challenge) int {
 	return 4 + len(wc.Kjc) + 4
 }
 
-func (ch *Challenger) Challenge(_ [][]byte) (line.Challenge, line.Validator, error) {
+func (ch *Challenger) Challenge(_ int, _ func(int) []byte) (line.Challenge, line.Validator, error) {
 	j := int(ch.next.Add(1) - 1)
 	if j > ch.mk.Params.Q {
 		return nil, nil, fmt.Errorf("bjo.Challenge: sentinel index %d exceeds Q=%d", j, ch.mk.Params.Q)

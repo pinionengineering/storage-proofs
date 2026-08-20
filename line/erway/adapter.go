@@ -276,8 +276,8 @@ func (ch *Challenger) DetectionProbability(n int, corruptFraction float64) float
 	return confidence.HypergeometricDetection(n, ch.c, corruptFraction)
 }
 
-func (ch *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, error) {
-	n := len(ids)
+func (ch *Challenger) Challenge(total int, _ func(int) []byte) (line.Challenge, line.Validator, error) {
+	n := total
 	c := ch.c
 	if c > n {
 		c = n
@@ -354,12 +354,8 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 	if !ok {
 		return nil, fmt.Errorf("erway.Prove: unknown suite %d", wc.SuiteID)
 	}
-	ids := make([][]byte, wc.N)
-	for i := range wc.N {
-		ids[i] = blocks.IntID(i)
-	}
 	mod128 := new(big.Int).Lsh(big.NewInt(1), 128)
-	indices0, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, mod128)
+	indices0, coeffs := line.DeriveChallenge(s, wc.Seed, wc.N, blocks.IntID, wc.C, mod128)
 	indices1 := make([]int, len(indices0))
 	for i, idx := range indices0 {
 		indices1[i] = idx + 1 // convert to 1-indexed block positions (§4.1)
@@ -399,12 +395,8 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 	if !ok {
 		return false, fmt.Errorf("erway.Verify: unknown suite %d", wc.SuiteID)
 	}
-	ids := make([][]byte, wc.N)
-	for i := range wc.N {
-		ids[i] = blocks.IntID(i)
-	}
 	mod128 := new(big.Int).Lsh(big.NewInt(1), 128)
-	indices0, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, mod128)
+	indices0, coeffs := line.DeriveChallenge(s, wc.Seed, wc.N, blocks.IntID, wc.C, mod128)
 	indices1 := make([]int, len(indices0))
 	for i, idx := range indices0 {
 		indices1[i] = idx + 1 // convert to 1-indexed block positions (§4.1)

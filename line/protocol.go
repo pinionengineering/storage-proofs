@@ -59,12 +59,15 @@ type Tagger interface {
 
 // Challenger generates audit challenges.
 type Challenger interface {
-	// Challenge produces a fresh challenge for a file whose block identifiers
-	// are given by ids (store.IDs() at audit time). The returned bytes are
-	// suitable for transmission to a Prover. The returned Validator is bound to
-	// this specific challenge round and must be used to verify the corresponding
-	// proof.
-	Challenge(ids [][]byte) (Challenge, Validator, error)
+	// Challenge produces a fresh challenge for a file with total block
+	// candidates, resolved one at a time via idAt (store.IDs()[i]/IDAt(i)
+	// at audit time -- see blocks.IDAtFunc) rather than requiring every
+	// identifier up front, so a caller auditing a huge file never needs
+	// the whole identifier list in memory at once just to build one
+	// challenge. The returned bytes are suitable for transmission to a
+	// Prover. The returned Validator is bound to this specific challenge
+	// round and must be used to verify the corresponding proof.
+	Challenge(total int, idAt func(int) []byte) (Challenge, Validator, error)
 }
 
 // Prover responds to audit challenges on behalf of the storage server.

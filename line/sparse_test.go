@@ -125,7 +125,7 @@ func TestSparseProverRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			chal, v, err := ch.Challenge(encoded.IDs())
+			chal, v, err := ch.Challenge(encoded.Len(), blocks.IDAtFunc(encoded))
 			if err != nil {
 				t.Fatal(err)
 			}

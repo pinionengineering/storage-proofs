@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"testing"
+
+	"github.com/pinionengineering/storage-proofs/blocks"
 )
 
 // marshalKeySizes is the set of RSA key bit lengths exercised by
@@ -95,7 +97,7 @@ func TestMarshalTaggerRoundTrip(t *testing.T) {
 					t.Fatalf("NewProver: %v", err)
 				}
 
-				chal, validator, err := challenger.Challenge(encoded.IDs())
+				chal, validator, err := challenger.Challenge(encoded.Len(), blocks.IDAtFunc(encoded))
 				if err != nil {
 					t.Fatalf("Challenge: %v", err)
 				}

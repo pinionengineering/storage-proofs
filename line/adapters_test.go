@@ -203,7 +203,7 @@ func TestAdapterRoundTrip(t *testing.T) {
 			}
 
 			// Honest round: proof must verify.
-			chal, v, err := ch.Challenge(encoded.IDs())
+			chal, v, err := ch.Challenge(encoded.Len(), blocks.IDAtFunc(encoded))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -232,7 +232,7 @@ func TestAdapterRoundTrip(t *testing.T) {
 			rand.Read(encBlocks[0]) //nolint:errcheck
 			corruptStore := blocks.NewMemStore(encBlocks)
 
-			chal2, v2, err := ch.Challenge(encoded.IDs())
+			chal2, v2, err := ch.Challenge(encoded.Len(), blocks.IDAtFunc(encoded))
 			if err != nil {
 				t.Fatal(err)
 			}

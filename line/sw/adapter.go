@@ -229,22 +229,31 @@ func (ch *Challenger) ChalBytes(_ line.Challenge) int {
 	return 41
 }
 
-func (ch *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, error) {
+// Challenge satisfies line.Challenger's (total, idAt) signature, but --
+// unlike swpub's Challenger -- still materializes the full identifier list
+// here, since NewValidator/porsw.Verify take ids [][]byte directly and
+// this scheme (private-key SW, not used by any deployed protocol as of
+// this writing) hasn't been converted to the lazy-resolver path swpub's
+// Validator uses. Fine for now: no known caller exercises this with a
+// candidate count large enough for that to matter.
+func (ch *Challenger) Challenge(total int, idAt func(int) []byte) (line.Challenge, line.Validator, error) {
 	c := ch.c
-	if c > len(ids) {
-		c = len(ids)
+	if c > total {
+		c = total
 	}
 	seed := make([]byte, 32)
 	if _, err := rand.Read(seed); err != nil {
 		return nil, nil, fmt.Errorf("sw.Challenge: seed: %w", err)
 	}
-	b, err := json.Marshal(wireChal{SuiteID: ch.s.ID(), Seed: seed, C: c, N: len(ids)})
+	b, err := json.Marshal(wireChal{SuiteID: ch.s.ID(), Seed: seed, C: c, N: total})
 	if err != nil {
 		return nil, nil, fmt.Errorf("sw.Challenge: marshal: %w", err)
 	}
-	idsCopy := make([][]byte, len(ids))
-	copy(idsCopy, ids)
-	return line.Challenge(b), NewValidator(ch.sk, idsCopy), nil
+	ids := make([][]byte, total)
+	for i := range total {
+		ids[i] = idAt(i)
+	}
+	return line.Challenge(b), NewValidator(ch.sk, ids), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -309,8 +318,7 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 	if !ok {
 		return nil, fmt.Errorf("sw.Prove: unknown suite %d", wc.SuiteID)
 	}
-	ids := store.IDs()
-	indices, coeffs := line.DeriveChallenge(s, wc.Seed, ids, wc.C, p.params.P)
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, store.Len(), blocks.IDAtFunc(store), wc.C, p.params.P)
 
 	// Fetch and decode tags for exactly the derived indices — the only ones
 	// porsw.RespondFetch below will touch. p.tags is a line.TagStore, so for
@@ -369,7 +377,7 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 	if !ok {
 		return false, fmt.Errorf("sw.Verify: unknown suite %d", wc.SuiteID)
 	}
-	indices, coeffs := line.DeriveChallenge(s, wc.Seed, v.ids, wc.C, v.sk.Params.P)
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, len(v.ids), func(i int) []byte { return v.ids[i] }, wc.C, v.sk.Params.P)
 	var wp wireProof
 	if err := json.Unmarshal(proof, &wp); err != nil {
 		return false, fmt.Errorf("sw.Verify: proof: %w", err)
@@ -423,7 +431,7 @@ func (e *swExtractor) Witness(chal line.Challenge, proof line.Proof) error {
 	if len(wp.Mu) != e.sk.Params.S {
 		return fmt.Errorf("sw.Extractor.Witness: proof has %d μ values, want %d", len(wp.Mu), e.sk.Params.S)
 	}
-	indices, coeffs := line.DeriveChallenge(s, wc.Seed, e.ids, wc.C, e.sk.Params.P)
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, len(e.ids), func(i int) []byte { return e.ids[i] }, wc.C, e.sk.Params.P)
 	e.rows = append(e.rows, swRow{indices: indices, coeffs: coeffs, rhs: wp.Mu})
 	return nil
 }

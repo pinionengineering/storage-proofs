@@ -125,8 +125,18 @@ func (c *Challenger) DetectionProbability(n int, corruptFraction float64) float6
 
 // Challenge implements line.Challenger. The returned Validator is bound to
 // this round's secret s and must be used to verify the proof for this challenge.
-func (c *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, error) {
-	numBlocks := len(ids)
+// Challenge satisfies line.Challenger's (total, idAt) signature, but --
+// unlike swpub's Challenger -- still materializes the full identifier list
+// here, since roundValidator takes ids [][]byte directly and this scheme
+// hasn't been converted to the lazy-resolver path. Fine for now: Ateniese
+// isn't chunked into super-blocks, so its candidate count is the real
+// (typically modest) block count, not a huge virtualized space.
+func (c *Challenger) Challenge(total int, idAt func(int) []byte) (line.Challenge, line.Validator, error) {
+	numBlocks := total
+	ids := make([][]byte, total)
+	for i := range total {
+		ids[i] = idAt(i)
+	}
 	s, err := rand.Int(rand.Reader, c.pk.N)
 	if err != nil {
 		return nil, nil, fmt.Errorf("ateniese.Challenge: %w", err)
@@ -157,9 +167,7 @@ func (c *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, er
 	if err != nil {
 		return nil, nil, fmt.Errorf("ateniese.Challenge: marshal: %w", err)
 	}
-	idsCopy := make([][]byte, len(ids))
-	copy(idsCopy, ids)
-	v := &roundValidator{pk: c.pk, sk: c.sk, s: c.s, ids: idsCopy, secret: s}
+	v := &roundValidator{pk: c.pk, sk: c.sk, s: c.s, ids: ids, secret: s}
 	return line.Challenge(b), v, nil
 }
 

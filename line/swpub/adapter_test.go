@@ -56,7 +56,8 @@ func TestRoundTrip(t *testing.T) {
 	}
 
 	// Audit round.
-	chal, validator, err := challenger.Challenge(tagger.EncodedBlocks().IDs())
+	encodedStore := tagger.EncodedBlocks()
+	chal, validator, err := challenger.Challenge(encodedStore.Len(), blocks.IDAtFunc(encodedStore))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,8 @@ func TestRoundTrip(t *testing.T) {
 	rand.Read(corrupt[0]) //nolint:errcheck
 	corruptStore := blocks.NewMemStore(corrupt)
 
-	chal2, v2, err := challenger.Challenge(blocks.NewMemStore(raw).IDs())
+	rawStore := blocks.NewMemStore(raw)
+	chal2, v2, err := challenger.Challenge(rawStore.Len(), blocks.IDAtFunc(rawStore))
 	if err != nil {
 		t.Fatal(err)
 	}

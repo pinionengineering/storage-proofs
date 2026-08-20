@@ -162,7 +162,7 @@ func main() {
 
 	for i := range *rounds {
 		t0 := time.Now()
-		chal, v, err := challenger.Challenge(encoded.IDs())
+		chal, v, err := challenger.Challenge(encoded.Len(), blocks.IDAtFunc(encoded))
 		must(err)
 
 		proof, err := requestProof(*server, chal)

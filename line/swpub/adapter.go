@@ -222,22 +222,23 @@ func (ch *Challenger) ChalBytes(_ line.Challenge) int {
 	return 41
 }
 
-func (ch *Challenger) Challenge(ids [][]byte) (line.Challenge, line.Validator, error) {
+// Challenge builds a challenge over total candidate blocks, resolved one
+// at a time via idAt as needed rather than requiring the caller to hand
+// over every identifier up front -- see Validator's doc comment for why.
+func (ch *Challenger) Challenge(total int, idAt func(int) []byte) (line.Challenge, line.Validator, error) {
 	c := ch.c
-	if c > len(ids) {
-		c = len(ids)
+	if c > total {
+		c = total
 	}
 	seed := make([]byte, 32)
 	if _, err := rand.Read(seed); err != nil {
 		return nil, nil, fmt.Errorf("swpub.Challenge: seed: %w", err)
 	}
-	b, err := json.Marshal(wireChal{SuiteID: ch.suite.ID(), Seed: seed, C: c, N: len(ids)})
+	b, err := json.Marshal(wireChal{SuiteID: ch.suite.ID(), Seed: seed, C: c, N: total})
 	if err != nil {
 		return nil, nil, fmt.Errorf("swpub.Challenge: marshal: %w", err)
 	}
-	idsCopy := make([][]byte, len(ids))
-	copy(idsCopy, ids)
-	return line.Challenge(b), &Validator{pk: ch.pk, ids: idsCopy}, nil
+	return line.Challenge(b), &Validator{pk: ch.pk, total: total, idAt: idAt}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +278,7 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 	if !ok {
 		return nil, fmt.Errorf("swpub.Prove: unknown suite %d", wc.SuiteID)
 	}
-	indices, coeffs := line.DeriveChallenge(s, wc.Seed, store.IDs(), wc.C, bn254Order)
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, store.Len(), blocks.IDAtFunc(store), wc.C, bn254Order)
 	swChal := &porsw.SWChallenge{Kind: porsw.PubKind, Indices: indices, Coeffs: coeffs}
 
 	// Fetch tags for exactly the derived indices — the only ones
@@ -313,12 +314,19 @@ func (p *Prover) Prove(chal line.Challenge, store blocks.BlockStore) (line.Proof
 // Validator
 // ---------------------------------------------------------------------------
 
-// Validator implements line.Validator for the SW public-key scheme.
-// ids are the block identifiers from the store at challenge time, used to
-// re-derive the same indices and coefficients as the prover per §3.3.
+// Validator implements line.Validator for the SW public-key scheme. idAt
+// resolves a block position to its identifier, exactly as captured at
+// challenge time (total is the candidate count idAt was valid over), used
+// to re-derive the same indices and coefficients as the prover per §3.3.
+// Kept as a resolver rather than a materialized [][]byte so a validator
+// challenging a huge tagged file (e.g. a lazily-computable identifier like
+// ipfsproof.SuperBlockID) never needs the whole identifier list in memory
+// at once -- see DeriveChallenge's doc comment for the incident that
+// motivated this.
 type Validator struct {
-	pk  *porsw.PubPublicKey
-	ids [][]byte
+	pk    *porsw.PubPublicKey
+	total int
+	idAt  func(int) []byte
 }
 
 func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) {
@@ -330,7 +338,7 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 	if !ok {
 		return false, fmt.Errorf("swpub.Verify: unknown suite %d", wc.SuiteID)
 	}
-	indices, coeffs := line.DeriveChallenge(s, wc.Seed, v.ids, wc.C, bn254Order)
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, v.total, v.idAt, wc.C, bn254Order)
 	var wp wireProof
 	if err := json.Unmarshal(proof, &wp); err != nil {
 		return false, fmt.Errorf("swpub.Verify: proof: %w", err)
@@ -340,7 +348,7 @@ func (v *Validator) Verify(chal line.Challenge, proof line.Proof) (bool, error) 
 		mu[j] = fixed32ToBig(m)
 	}
 	swChal := &porsw.SWChallenge{Kind: porsw.PubKind, Indices: indices, Coeffs: coeffs}
-	return porsw.VerifyPub(v.pk, swChal, &porsw.SWProof{Sigma: wp.Sigma, Mu: mu}, v.ids)
+	return porsw.VerifyPub(v.pk, swChal, &porsw.SWProof{Sigma: wp.Sigma, Mu: mu}, v.idAt)
 }
 
 // ---------------------------------------------------------------------------
@@ -399,7 +407,7 @@ func (e *swPubExtractor) Witness(chal line.Challenge, proof line.Proof) error {
 	if len(wp.Mu) != e.S {
 		return fmt.Errorf("swpub.Extractor.Witness: proof has %d μ values, want %d", len(wp.Mu), e.S)
 	}
-	indices, coeffs := line.DeriveChallenge(s, wc.Seed, e.ids, wc.C, bn254Order)
+	indices, coeffs := line.DeriveChallenge(s, wc.Seed, len(e.ids), func(i int) []byte { return e.ids[i] }, wc.C, bn254Order)
 	rhs := make([]*big.Int, e.S)
 	for j, m := range wp.Mu {
 		rhs[j] = fixed32ToBig(m)

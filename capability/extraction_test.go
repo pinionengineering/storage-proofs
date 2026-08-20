@@ -77,7 +77,7 @@ func tryExtraction(sch SchemeSpec, original blockspkg.BlockStore) (bool, error) 
 	// until Extract succeeds or we exhaust the round budget.
 	var recovered blockspkg.BlockStore
 	for range extractMaxRound {
-		chal, validator, err := challenger.Challenge(encoded.IDs())
+		chal, validator, err := challenger.Challenge(encoded.Len(), blockspkg.IDAtFunc(encoded))
 		if err != nil {
 			return false, err
 		}

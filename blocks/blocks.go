@@ -63,6 +63,19 @@ func BlockAt(store BlockStore, idx int) ([]byte, error) {
 	return store.Block(store.IDs()[idx])
 }
 
+// IDAtFunc returns a resolver from position to identifier, using store's
+// IDAt fast path if it implements IndexedBlockStore -- the same fallback
+// BlockAt encodes, packaged as a value for callers (e.g.
+// line.DeriveChallenge) that need to resolve many positions one at a time
+// rather than fetching a single block.
+func IDAtFunc(store BlockStore) func(int) []byte {
+	if ib, ok := store.(IndexedBlockStore); ok {
+		return ib.IDAt
+	}
+	ids := store.IDs()
+	return func(i int) []byte { return ids[i] }
+}
+
 // ---------------------------------------------------------------------------
 // FileStore
 // ---------------------------------------------------------------------------
